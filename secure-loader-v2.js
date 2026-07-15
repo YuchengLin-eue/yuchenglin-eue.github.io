@@ -122,7 +122,8 @@ async function openCipherCache() {
 
 async function readExactBytes(response, expectedBytes, report, meta) {
   const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > 0 && contentLength !== expectedBytes) throw new Error("加密模块长度不正确");
+  const contentEncoding = response.headers.get("content-encoding");
+  if ((!contentEncoding || contentEncoding === "identity") && Number.isFinite(contentLength) && contentLength > 0 && contentLength !== expectedBytes) throw new Error("加密模块长度不正确");
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength !== expectedBytes) throw new Error("加密模块长度不正确");
