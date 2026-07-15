@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#163f37">
+  <title>安全访问 | 备件运营管理平台</title>
+  <style>
+    :root{font-family:"Microsoft YaHei UI","Segoe UI",Arial,sans-serif;color:#182421;background:#edf1f0;font-synthesis:none}
+    *{box-sizing:border-box;letter-spacing:0}
+    html,body{width:100%;height:100%;margin:0}
+    body{min-width:280px}
+    button,input{font:inherit}
+    button{cursor:pointer}
+    button:disabled{cursor:wait;opacity:.62}
+    [hidden]{display:none!important}
+    .login{min-height:100%;display:grid;grid-template-rows:64px 1fr 48px;background:#edf1f0}
+    .brandbar{display:flex;align-items:center;padding:0 clamp(20px,4vw,56px);background:#fff;border-bottom:1px solid #d7dfdc}
+    .brandmark{display:grid;place-items:center;width:34px;height:34px;margin-right:12px;border-radius:6px;background:#163f37;color:#fff;font-size:16px;font-weight:700}
+    .brandname{font-size:17px;font-weight:700;color:#17342e}
+    .brandsub{margin-left:12px;padding-left:12px;border-left:1px solid #ccd6d2;color:#65736f;font-size:13px}
+    .main{display:grid;place-items:center;padding:28px 18px}
+    .panel{width:min(100%,420px);background:#fff;border:1px solid #ced8d4;border-radius:8px;box-shadow:0 12px 32px rgba(20,48,41,.1);padding:32px}
+    .eyebrow{margin:0 0 8px;color:#65736f;font-size:12px;font-weight:700}
+    h1{margin:0;color:#17342e;font-size:25px;line-height:1.35}
+    .lead{margin:10px 0 26px;color:#64726e;font-size:14px;line-height:1.7}
+    label{display:block;margin-bottom:8px;color:#263b35;font-size:13px;font-weight:700}
+    .password{display:grid;grid-template-columns:1fr auto;height:44px;border:1px solid #aebdb8;border-radius:6px;background:#fff;overflow:hidden;transition:border-color .15s,box-shadow .15s}
+    .password:focus-within{border-color:#246a5a;box-shadow:0 0 0 3px rgba(36,106,90,.12)}
+    .password input{width:100%;min-width:0;border:0;outline:0;padding:0 13px;color:#172a25;background:transparent}
+    .toggle{min-width:58px;border:0;border-left:1px solid #d8dfdd;background:#f7f9f8;color:#36564e;font-size:13px}
+    .primary{width:100%;height:44px;margin-top:16px;border:1px solid #163f37;border-radius:6px;background:#163f37;color:#fff;font-weight:700}
+    .primary:hover:not(:disabled){background:#0f332c}
+    .primary:focus-visible,.toggle:focus-visible,.lock:focus-visible{outline:3px solid rgba(36,106,90,.22);outline-offset:2px}
+    .progress{width:100%;height:6px;margin:18px 0 0;display:block;accent-color:#246a5a}
+    .status{min-height:22px;margin:10px 0 0;color:#65736f;font-size:13px;line-height:1.6}
+    .status[data-type="error"]{color:#a12c2c}
+    .security{display:flex;gap:8px;align-items:flex-start;margin-top:20px;padding-top:18px;border-top:1px solid #e2e7e5;color:#71807b;font-size:12px;line-height:1.6}
+    .security b{display:grid;place-items:center;flex:0 0 20px;height:20px;border:1px solid #aebdb8;border-radius:50%;color:#36564e;font-size:11px}
+    .footer{display:flex;align-items:center;justify-content:center;color:#7b8985;font-size:12px}
+    .workspace{height:100%;background:#fff}
+    .workspacebar{height:44px;display:flex;align-items:center;gap:14px;padding:0 12px 0 16px;border-bottom:1px solid #d5dedb;background:#fff;color:#17342e}
+    .workspacetitle{font-size:14px;font-weight:700}
+    .workspacestatus{min-width:0;margin-left:auto;color:#66756f;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .lock{height:30px;padding:0 11px;border:1px solid #b9c6c2;border-radius:5px;background:#f7f9f8;color:#314d46;font-size:12px}
+    .appframe{display:block;width:100%;height:calc(100% - 44px);border:0;background:#fff}
+    @media(max-width:520px){.login{grid-template-rows:56px 1fr 40px}.brandbar{padding:0 16px}.brandsub{display:none}.main{align-items:start;padding:18px 12px}.panel{padding:24px 20px}h1{font-size:22px}}
+    @media(prefers-reduced-motion:no-preference){.panel{animation:enter .24s ease-out}@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}}
+  </style>
+</head>
+<body>
+  <section class="login" data-login-shell>
+    <header class="brandbar">
+      <span class="brandmark" aria-hidden="true">备</span>
+      <span class="brandname">备件运营管理平台</span>
+      <span class="brandsub">安全访问</span>
+    </header>
+    <main class="main">
+      <form class="panel" data-unlock-form>
+        <p class="eyebrow">ENCRYPTED WORKSPACE</p>
+        <h1>打开工作平台</h1>
+        <p class="lead">输入访问密码后，业务模块将在当前设备内完成解密。</p>
+        <label for="access-password">访问密码</label>
+        <div class="password">
+          <input id="access-password" data-password type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required autofocus>
+          <button class="toggle" data-toggle-password type="button" aria-label="显示密码" title="显示或隐藏密码">显示</button>
+        </div>
+        <button class="primary" data-submit type="submit">进入平台</button>
+        <progress class="progress" data-progress max="100" value="0" hidden></progress>
+        <p class="status" data-status role="status" aria-live="polite">正在检查站点</p>
+        <div class="security"><b aria-hidden="true">i</b><span>密码不会上传或写入站点文件，解密仅在浏览器内进行。</span></div>
+      </form>
+    </main>
+    <footer class="footer">Protected local decryption</footer>
+  </section>
+  <section class="workspace" data-workspace hidden>
+    <header class="workspacebar">
+      <span class="workspacetitle">备件运营管理平台</span>
+      <span class="workspacestatus" data-workspace-status role="status" aria-live="polite"></span>
+      <button class="lock" data-lock type="button" title="关闭当前会话">锁定</button>
+    </header>
+    <iframe class="appframe" data-app-frame title="备件运营管理平台"></iframe>
+  </section>
+  <script type="module" src="secure-loader.js"></script>
+</body>
+</html>
