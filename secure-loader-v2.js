@@ -1,0 +1,732 @@
+const MANIFEST_VERSION = 2;
+const CIPHER_CACHE_NAME = "secure-pages-v2-ciphertext";
+const EXPECTED_MODULES = Object.freeze({
+  app: "app-v2.enc",
+  quote: "quote-v2.enc",
+  inventory: "inventory-v2.enc",
+  pom: "pom-v2.enc",
+  mechatronics: "mechatronics-v2.enc"
+});
+
+const EXPECTED_ASSETS = Object.freeze({
+  "quote-images": "quote-images-v2.enc"
+});
+
+const MODULE_TOKENS = Object.freeze({
+  quote: "__SECURE_MODULE_QUOTE__",
+  inventory: "__SECURE_MODULE_INVENTORY__",
+  pom: "__SECURE_MODULE_POM__",
+  mechatronics: "__SECURE_MODULE_MECHATRONICS__"
+});
+
+const LOADER_FILES = Object.freeze({
+  quote: "module-quote-v2.html",
+  inventory: "module-inventory-v2.html",
+  pom: "module-pom-v2.html",
+  mechatronics: "module-mechatronics-v2.html"
+});
+
+const MODE_QUERIES = Object.freeze({
+  inventory: "?standalone=1",
+  pom: "?embed=1",
+  mechatronics: "?embed=1"
+});
+
+const PREFETCH_ORDER = Object.freeze(["quote", "inventory", "pom", "mechatronics"]);
+const MAX_RECORD_BYTES = 256 * 1024 * 1024;
+const LOGIN_TITLE = "安全访问 | 备件运营管理平台";
+const PLATFORM_TITLE = "备件运营管理平台";
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const cipherJobs = new Map();
+let cipherCachePromise;
+
+function fromBase64(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error("加密清单格式不正确");
+  const binary = atob(value);
+  const output = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) output[index] = binary.charCodeAt(index);
+  return output;
+}
+
+function validateRecord(record, expectedFiles, seen) {
+  if (!record || expectedFiles[record.id] !== record.file || seen.has(record.id)) throw new Error("加密清单记录不正确");
+  if (!Number.isInteger(record.bytes) || record.bytes < 17 || record.bytes > MAX_RECORD_BYTES || !Number.isInteger(record.plainBytes) || record.plainBytes < 1 || record.plainBytes > MAX_RECORD_BYTES || !/^[a-f0-9]{64}$/.test(record.sha256)) throw new Error("模块校验信息不正确");
+  const iv = fromBase64(record.iv);
+  const aad = fromBase64(record.aad);
+  if (iv.byteLength !== 12 || textDecoder.decode(aad) !== `secure-pages:v${MANIFEST_VERSION}:${record.id}`) throw new Error("模块加密参数不正确");
+  seen.add(record.id);
+  return { ...record, iv, aad };
+}
+
+function validateManifest(manifest) {
+  if (!manifest || manifest.version !== MANIFEST_VERSION || manifest.entry !== "app" || manifest.encoding !== "utf-8" || manifest.compression?.name !== "gzip") throw new Error("站点版本不兼容");
+  if (manifest.kdf?.name !== "PBKDF2" || manifest.kdf?.hash !== "SHA-256" || !Number.isInteger(manifest.kdf?.iterations) || manifest.kdf.iterations < 100000) throw new Error("密钥参数不正确");
+  if (manifest.cipher?.name !== "AES-GCM" || manifest.cipher?.keyLength !== 256 || manifest.cipher?.tagLength !== 128) throw new Error("加密参数不正确");
+  const salt = fromBase64(manifest.kdf.salt);
+  if (salt.byteLength < 16) throw new Error("密钥参数不正确");
+  if (!Array.isArray(manifest.modules) || manifest.modules.length !== Object.keys(EXPECTED_MODULES).length) throw new Error("模块清单不完整");
+  if (!Array.isArray(manifest.assets) || manifest.assets.length !== Object.keys(EXPECTED_ASSETS).length) throw new Error("资源清单不完整");
+  const moduleIds = new Set();
+  const assetIds = new Set();
+  const modules = new Map(manifest.modules.map(record => {
+    const validated = validateRecord(record, EXPECTED_MODULES, moduleIds);
+    return [validated.id, validated];
+  }));
+  const assets = new Map(manifest.assets.map(record => {
+    const validated = validateRecord(record, EXPECTED_ASSETS, assetIds);
+    return [validated.id, validated];
+  }));
+  for (const id of Object.keys(EXPECTED_MODULES)) if (!modules.has(id)) throw new Error("模块清单不完整");
+  for (const id of Object.keys(EXPECTED_ASSETS)) if (!assets.has(id)) throw new Error("资源清单不完整");
+  return { manifest, salt, modules, assets };
+}
+
+async function sha256Hex(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, value => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function deriveKey(password, manifest, salt) {
+  const material = await crypto.subtle.importKey("raw", textEncoder.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      hash: manifest.kdf.hash,
+      salt,
+      iterations: manifest.kdf.iterations
+    },
+    material,
+    {
+      name: "AES-GCM",
+      length: manifest.cipher.keyLength
+    },
+    false,
+    ["decrypt"]
+  );
+}
+
+function recordUrl(record) {
+  const url = new URL(record.file, document.baseURI);
+  url.searchParams.set("v", `${MANIFEST_VERSION}-${record.sha256}`);
+  return url;
+}
+
+async function openCipherCache() {
+  if (!("caches" in globalThis)) return null;
+  if (!cipherCachePromise) {
+    cipherCachePromise = globalThis.caches.open(CIPHER_CACHE_NAME).catch(() => null);
+  }
+  return cipherCachePromise;
+}
+
+async function readExactBytes(response, expectedBytes, report, meta) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > 0 && contentLength !== expectedBytes) throw new Error("加密模块长度不正确");
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== expectedBytes) throw new Error("加密模块长度不正确");
+    report(bytes.byteLength, expectedBytes, meta);
+    return bytes;
+  }
+  const output = new Uint8Array(expectedBytes);
+  const reader = response.body.getReader();
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (received + value.byteLength > expectedBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error("加密模块长度不正确");
+    }
+    output.set(value, received);
+    received += value.byteLength;
+    report(received, expectedBytes, meta);
+  }
+  if (received !== expectedBytes) throw new Error("加密模块长度不正确");
+  return output;
+}
+
+async function readVerifiedCache(cache, url, record, report) {
+  if (!cache) return null;
+  let response;
+  try {
+    response = await cache.match(url.href);
+  } catch {
+    return null;
+  }
+  if (!response) return null;
+  try {
+    const bytes = await readExactBytes(response, record.bytes, () => {}, { cached: true });
+    if (await sha256Hex(bytes) !== record.sha256) throw new Error("加密模块校验失败");
+    report(record.bytes, record.bytes, { cached: true });
+    return bytes;
+  } catch {
+    try {
+      await cache.delete(url.href);
+    } catch {
+    }
+    return null;
+  }
+}
+
+async function fetchVerifiedCipher(record, report) {
+  const url = recordUrl(record);
+  const cache = await openCipherCache();
+  const cached = await readVerifiedCache(cache, url, record, report);
+  if (cached) return cached;
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) throw new Error("无法下载加密模块");
+  const bytes = await readExactBytes(response, record.bytes, report, { cached: false });
+  if (await sha256Hex(bytes) !== record.sha256) throw new Error("加密模块校验失败");
+  if (cache) {
+    try {
+      await cache.put(url.href, new Response(bytes, {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(bytes.byteLength)
+        }
+      }));
+    } catch {
+    }
+  }
+  return bytes;
+}
+
+function fetchEncrypted(record, report = () => {}) {
+  const key = recordUrl(record).href;
+  let job = cipherJobs.get(key);
+  if (job) {
+    job.listeners.add(report);
+    if (job.last) {
+      try {
+        report(...job.last);
+      } catch {
+      }
+    }
+    return job.promise.finally(() => job.listeners.delete(report));
+  }
+  job = { listeners: new Set([report]), last: null, promise: null };
+  const notify = (received, total, meta) => {
+    job.last = [received, total, meta];
+    for (const listener of job.listeners) {
+      try {
+        listener(received, total, meta);
+      } catch {
+      }
+    }
+  };
+  job.promise = fetchVerifiedCipher(record, notify).finally(() => {
+    if (cipherJobs.get(key) === job) cipherJobs.delete(key);
+  });
+  cipherJobs.set(key, job);
+  return job.promise.finally(() => job.listeners.delete(report));
+}
+
+async function pruneCipherCache(records) {
+  const cache = await openCipherCache();
+  if (!cache) return;
+  const allowed = new Set(records.map(record => recordUrl(record).href));
+  let requests;
+  try {
+    requests = await cache.keys();
+  } catch {
+    return;
+  }
+  await Promise.all(requests.filter(request => !allowed.has(request.url)).map(request => cache.delete(request).catch(() => false)));
+}
+
+async function decryptCipher(key, manifest, record, encrypted) {
+  try {
+    return await crypto.subtle.decrypt(
+      {
+        name: manifest.cipher.name,
+        iv: record.iv,
+        additionalData: record.aad,
+        tagLength: manifest.cipher.tagLength
+      },
+      key,
+      encrypted
+    );
+  } catch (error) {
+    throw new Error("密码不正确或加密数据已损坏", { cause: error });
+  }
+}
+
+async function decompressGzip(buffer, expectedBytes) {
+  if (typeof DecompressionStream !== "function") throw new Error("当前浏览器版本不支持安全压缩数据");
+  let reader;
+  try {
+    const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream("gzip"));
+    reader = stream.getReader();
+    const output = new Uint8Array(expectedBytes);
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (received + value.byteLength > expectedBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error("解压后数据长度不正确");
+      }
+      output.set(value, received);
+      received += value.byteLength;
+    }
+    if (received !== expectedBytes) throw new Error("解压后数据长度不正确");
+    return output.buffer;
+  } catch (error) {
+    if (error instanceof Error && /浏览器版本|数据长度/.test(error.message)) throw error;
+    throw new Error("加密模块解压失败", { cause: error });
+  } finally {
+    if (reader) reader.releaseLock();
+  }
+}
+
+function decodeText(buffer) {
+  try {
+    return textDecoder.decode(buffer);
+  } catch (error) {
+    throw new Error("模块文本编码不正确", { cause: error });
+  }
+}
+
+function injectAfterHead(html, source) {
+  const head = /<head\b[^>]*>/i.exec(html);
+  if (!head) return `${source}${html}`;
+  const offset = head.index + head[0].length;
+  return `${html.slice(0, offset)}${source}${html.slice(offset)}`;
+}
+
+function patchScriptQueries(html, query) {
+  return html.replace(/(<script\b[^>]*>)([\s\S]*?)(<\/script\s*>)/gi, (match, opening, code, closing) => {
+    const replacement = JSON.stringify(query);
+    const patched = code
+      .replace(/\bwindow\.location\.search\b/g, replacement)
+      .replace(/(^|[^\w.])location\.search\b/g, (value, prefix) => `${prefix}${replacement}`);
+    return `${opening}${patched}${closing}`;
+  });
+}
+
+export function prepareModuleHtml(moduleId, html) {
+  const query = MODE_QUERIES[moduleId];
+  if (!query) return html;
+  const mode = moduleId === "inventory" ? "standalone" : "embed";
+  const bootstrap = `<script>(function(){var q=${JSON.stringify(query)},m=${JSON.stringify(mode)};window.__SECURE_PAGE_MODE__=m;document.documentElement.dataset.secureMode=m;if(m==="embed"){document.documentElement.dataset.embed="1";document.documentElement.classList.add("is-embedded")}else{document.documentElement.dataset.standalone="1"}try{history.replaceState(null,"",location.pathname+q+location.hash)}catch(e){}})();<\/script>`;
+  return injectAfterHead(patchScriptQueries(html, query), bootstrap);
+}
+
+export function prepareAppHtml(html) {
+  const bridge = `<script>(function(){var p=document,o=p,d;function s(v){try{if(top!==window)top.document.title=String(v||${JSON.stringify(PLATFORM_TITLE)})}catch(e){}}while(o&&!d){d=Object.getOwnPropertyDescriptor(o,"title");o=Object.getPrototypeOf(o)}if(d&&d.get&&d.set)Object.defineProperty(p,"title",{configurable:true,get:function(){return d.get.call(p)},set:function(v){d.set.call(p,v);s(v)}});new MutationObserver(function(){s(p.title)}).observe(document.documentElement,{subtree:true,childList:true,characterData:true});addEventListener("DOMContentLoaded",function(){s(p.title)},{once:true})})();<\/script>`;
+  return injectAfterHead(html, bridge);
+}
+
+export function replaceModuleTokens(appHtml) {
+  let output = appHtml;
+  for (const [moduleId, token] of Object.entries(MODULE_TOKENS)) {
+    if (!output.includes(token)) throw new Error("平台模块映射不完整");
+    const loaderUrl = new URL(LOADER_FILES[moduleId], document.baseURI).href;
+    output = output.split(token).join(loaderUrl);
+  }
+  if (/__SECURE_MODULE_[A-Z_]+__/.test(output)) throw new Error("平台模块映射失败");
+  return output;
+}
+
+export async function fetchManifest() {
+  const response = await fetch(new URL("manifest-v2.json", document.baseURI), { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) throw new Error("无法读取加密清单");
+  return response.json();
+}
+
+export async function createSecureSession(password, rawManifest, progress = () => {}) {
+  if (!globalThis.crypto?.subtle) throw new Error("当前浏览器不支持安全解密");
+  const { manifest, salt, modules, assets } = validateManifest(rawManifest);
+  void pruneCipherCache([...modules.values(), ...assets.values()]);
+  progress({ phase: "derive", value: 4, message: "正在验证访问密码" });
+  const appModule = modules.get("app");
+  const keyPromise = deriveKey(password, manifest, salt);
+  const encryptedPromise = fetchEncrypted(appModule, (received, total, meta) => {
+    progress({ phase: "download", value: 8 + Math.min(68, received / total * 68), message: meta?.cached ? "正在读取本机加密缓存" : "正在下载平台入口" });
+  });
+  let key = await keyPromise;
+  const encryptedApp = await encryptedPromise;
+  progress({ phase: "decrypt", value: 82, message: "正在解密平台入口" });
+  const compressedApp = await decryptCipher(key, manifest, appModule, encryptedApp);
+  progress({ phase: "decompress", value: 92, message: "正在解压平台入口" });
+  const appBuffer = await decompressGzip(compressedApp, appModule.plainBytes);
+  let appHtml = prepareAppHtml(replaceModuleTokens(decodeText(appBuffer)));
+  const moduleHtml = new Map();
+  const modulePending = new Map();
+  const assetPending = new Map();
+  let disposed = false;
+
+  const loadModule = async (moduleId, moduleProgress = () => {}) => {
+    if (disposed) throw new Error("当前安全会话已关闭");
+    if (!LOADER_FILES[moduleId]) throw new Error("未知模块");
+    if (moduleHtml.has(moduleId)) return moduleHtml.get(moduleId);
+    if (modulePending.has(moduleId)) return modulePending.get(moduleId);
+    const task = (async () => {
+      const record = modules.get(moduleId);
+      moduleProgress({ phase: "download", value: 0, message: "正在准备加密模块" });
+      let encrypted;
+      try {
+        encrypted = await fetchEncrypted(record, (received, total, meta) => {
+          moduleProgress({ phase: "download", value: received / total * 78, message: meta?.cached ? "正在读取本机加密缓存" : "正在下载加密模块" });
+        });
+      } catch (error) {
+        throw error;
+      }
+      if (disposed || !key) throw new Error("当前安全会话已关闭");
+      moduleProgress({ phase: "decrypt", value: 84, message: "正在解密模块" });
+      let compressed;
+      try {
+        compressed = await decryptCipher(key, manifest, record, encrypted);
+      } catch (error) {
+        if (error instanceof Error && error.message === "密码不正确或加密数据已损坏") throw new Error("模块数据损坏或版本不匹配", { cause: error });
+        throw error;
+      }
+      if (disposed) throw new Error("当前安全会话已关闭");
+      moduleProgress({ phase: "decompress", value: 94, message: "正在解压模块" });
+      const buffer = await decompressGzip(compressed, record.plainBytes);
+      if (disposed) throw new Error("当前安全会话已关闭");
+      const html = prepareModuleHtml(moduleId, decodeText(buffer));
+      if (disposed) throw new Error("当前安全会话已关闭");
+      moduleHtml.set(moduleId, html);
+      moduleProgress({ phase: "ready", value: 100, message: "模块加载完成" });
+      return html;
+    })().finally(() => modulePending.delete(moduleId));
+    modulePending.set(moduleId, task);
+    return task;
+  };
+
+  const loadAsset = async (assetId, assetProgress = () => {}) => {
+    if (disposed) throw new Error("当前安全会话已关闭");
+    if (!assets.has(assetId)) throw new Error("未知加密资源");
+    if (assetPending.has(assetId)) return assetPending.get(assetId);
+    const task = (async () => {
+      const record = assets.get(assetId);
+      assetProgress({ phase: "download", value: 0, message: "正在准备图片资料" });
+      const encrypted = await fetchEncrypted(record, (received, total, meta) => {
+        assetProgress({ phase: "download", value: received / total * 78, message: meta?.cached ? "正在读取本机图片缓存" : "正在下载加密图片资料" });
+      });
+      if (disposed || !key) throw new Error("当前安全会话已关闭");
+      assetProgress({ phase: "decrypt", value: 84, message: "正在解密图片资料" });
+      const compressed = await decryptCipher(key, manifest, record, encrypted);
+      if (disposed) throw new Error("当前安全会话已关闭");
+      assetProgress({ phase: "decompress", value: 94, message: "正在解压图片资料" });
+      const buffer = await decompressGzip(compressed, record.plainBytes);
+      if (disposed) throw new Error("当前安全会话已关闭");
+      assetProgress({ phase: "ready", value: 100, message: "图片资料加载完成" });
+      return decodeText(buffer);
+    })().finally(() => assetPending.delete(assetId));
+    assetPending.set(assetId, task);
+    return task;
+  };
+
+  const prefetchModules = async (moduleIds = PREFETCH_ORDER) => {
+    for (const moduleId of moduleIds) {
+      if (disposed) return;
+      const record = modules.get(moduleId);
+      if (!record || moduleId === "app" || moduleHtml.has(moduleId) || modulePending.has(moduleId)) continue;
+      try {
+        await fetchEncrypted(record);
+      } catch {
+      }
+    }
+  };
+
+  progress({ phase: "ready", value: 100, message: "平台入口已就绪" });
+  return {
+    get appHtml() {
+      if (disposed) throw new Error("当前安全会话已关闭");
+      return appHtml;
+    },
+    loadModule,
+    loadAsset,
+    prefetchModules,
+    isLoaded(moduleId) {
+      return moduleHtml.has(moduleId);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      appHtml = "";
+      key = null;
+      modulePending.clear();
+      assetPending.clear();
+      moduleHtml.clear();
+    }
+  };
+}
+
+function loaderFrameForSource(source, moduleId, appWindow) {
+  try {
+    if (!source || source.top !== window) return null;
+    let cursor = source;
+    let insideApp = false;
+    while (cursor && cursor !== window && cursor !== cursor.parent) {
+      if (cursor.parent === appWindow) {
+        insideApp = true;
+        break;
+      }
+      cursor = cursor.parent;
+    }
+    if (!insideApp) return null;
+    const actual = new URL(source.location.href);
+    const expected = new URL(LOADER_FILES[moduleId], document.baseURI);
+    if (actual.origin !== expected.origin || actual.pathname !== expected.pathname) return null;
+    const frame = source.frameElement;
+    if (!frame || frame.ownerDocument?.defaultView !== source.parent) return null;
+    return frame;
+  } catch {
+    return null;
+  }
+}
+
+function trustedQuoteWindow(source, appFrame) {
+  try {
+    if (!source || source.top !== window || source.parent !== appFrame.contentWindow) return false;
+    const frame = source.frameElement;
+    if (!frame || frame.ownerDocument !== appFrame.contentDocument || !frame.classList.contains("quoteFrame")) return false;
+    const sourceUrl = frame.dataset.src || frame.getAttribute("src") || "";
+    const expected = new URL(LOADER_FILES.quote, document.baseURI);
+    const actual = new URL(sourceUrl, appFrame.contentWindow.location.href);
+    return actual.origin === expected.origin && actual.pathname === expected.pathname;
+  } catch {
+    return false;
+  }
+}
+
+function validRequestId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 120;
+}
+
+export function attachModuleBridge(session, appFrame, onState = () => {}) {
+  let activeRequests = 0;
+  const begin = (kind, id) => {
+    activeRequests += 1;
+    onState({ busy: true, kind, module: id, count: activeRequests, message: kind === "asset" ? "正在安全加载图片资料" : "正在安全加载模块" });
+  };
+  const update = (kind, id, state) => {
+    onState({ ...state, busy: true, kind, module: id, count: activeRequests });
+  };
+  const finish = () => {
+    activeRequests = Math.max(0, activeRequests - 1);
+    onState({ busy: activeRequests > 0, count: activeRequests, message: activeRequests ? "正在安全加载数据" : "" });
+  };
+  const handler = async event => {
+    if (event.origin !== location.origin) return;
+    const data = event.data;
+    if (!data || !validRequestId(data.requestId)) return;
+    if (data.type === "secure-module-request" && LOADER_FILES[data.module]) {
+      const targetFrame = loaderFrameForSource(event.source, data.module, appFrame.contentWindow);
+      if (!targetFrame) return;
+      begin("module", data.module);
+      try {
+        const html = await session.loadModule(data.module, state => update("module", data.module, state));
+        const currentFrame = loaderFrameForSource(event.source, data.module, appFrame.contentWindow);
+        if (currentFrame !== targetFrame) throw new Error("模块容器已发生变化");
+        currentFrame.srcdoc = html;
+      } catch (error) {
+        try {
+          event.source.postMessage({ type: "secure-module-response", requestId: data.requestId, ok: false, message: error instanceof Error ? error.message : "模块加载失败" }, event.origin);
+        } catch {
+        }
+      } finally {
+        finish();
+      }
+      return;
+    }
+    if (data.type === "secure-asset-request" && data.asset === "quote-images" && trustedQuoteWindow(event.source, appFrame)) {
+      begin("asset", data.asset);
+      try {
+        const jsonText = await session.loadAsset(data.asset, state => update("asset", data.asset, state));
+        if (!trustedQuoteWindow(event.source, appFrame)) throw new Error("报价单容器已发生变化");
+        const apply = event.source.__SECURE_APPLY_QUOTE_IMAGES__;
+        if (typeof apply !== "function") throw new Error("图片资料接收器不可用");
+        await apply.call(event.source, jsonText, data.requestId);
+      } catch (error) {
+        try {
+          event.source.postMessage({ type: "secure-asset-response", requestId: data.requestId, ok: false, message: error instanceof Error ? error.message : "图片资料加载失败" }, event.origin);
+        } catch {
+        }
+      } finally {
+        finish();
+      }
+    }
+  };
+  window.addEventListener("message", handler);
+  return () => window.removeEventListener("message", handler);
+}
+
+function connectionAllowsPrefetch() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!connection) return true;
+  return !connection.saveData && connection.effectiveType !== "slow-2g" && connection.effectiveType !== "2g";
+}
+
+function bindShell() {
+  const form = document.querySelector("[data-unlock-form]");
+  if (!form) return;
+  const shell = document.querySelector("[data-login-shell]");
+  const workspace = document.querySelector("[data-workspace]");
+  const frame = document.querySelector("[data-app-frame]");
+  const passwordInput = document.querySelector("[data-password]");
+  const toggle = document.querySelector("[data-toggle-password]");
+  const submit = document.querySelector("[data-submit]");
+  const status = document.querySelector("[data-status]");
+  const progressBar = document.querySelector("[data-progress]");
+  const workspaceStatus = document.querySelector("[data-workspace-status]");
+  const lock = document.querySelector("[data-lock]");
+  let manifestPromise = fetchManifest();
+  let activeSession = null;
+  let detachBridge = null;
+  let titleObserver = null;
+  let prefetchHandle = null;
+  let prefetchIsIdle = false;
+
+  const setStatus = (message, type = "") => {
+    status.textContent = message;
+    status.dataset.type = type;
+  };
+
+  const cancelPrefetch = () => {
+    if (prefetchHandle === null) return;
+    if (prefetchIsIdle && typeof cancelIdleCallback === "function") cancelIdleCallback(prefetchHandle);
+    else clearTimeout(prefetchHandle);
+    prefetchHandle = null;
+    prefetchIsIdle = false;
+  };
+
+  const schedulePrefetch = session => {
+    cancelPrefetch();
+    if (!connectionAllowsPrefetch()) return;
+    const run = () => {
+      prefetchHandle = null;
+      prefetchIsIdle = false;
+      if (activeSession === session) void session.prefetchModules(PREFETCH_ORDER);
+    };
+    if (typeof requestIdleCallback === "function") {
+      prefetchIsIdle = true;
+      prefetchHandle = requestIdleCallback(run, { timeout: 4000 });
+    } else {
+      prefetchHandle = setTimeout(run, 1200);
+    }
+  };
+
+  const clearSession = () => {
+    cancelPrefetch();
+    if (detachBridge) detachBridge();
+    if (titleObserver) titleObserver.disconnect();
+    if (activeSession) activeSession.dispose();
+    detachBridge = null;
+    titleObserver = null;
+    activeSession = null;
+    frame.removeAttribute("srcdoc");
+    frame.src = "about:blank";
+    workspaceStatus.textContent = "";
+  };
+
+  const reset = () => {
+    clearSession();
+    workspace.hidden = true;
+    shell.hidden = false;
+    passwordInput.value = "";
+    progressBar.value = 0;
+    progressBar.hidden = true;
+    document.title = LOGIN_TITLE;
+    setStatus("请输入访问密码");
+    passwordInput.focus();
+  };
+
+  const syncTitle = () => {
+    try {
+      document.title = frame.contentDocument?.title?.trim() || PLATFORM_TITLE;
+    } catch {
+      document.title = PLATFORM_TITLE;
+    }
+  };
+
+  const observeAppTitle = () => {
+    if (titleObserver) titleObserver.disconnect();
+    syncTitle();
+    try {
+      const target = frame.contentDocument?.head || frame.contentDocument?.documentElement;
+      if (!target) return;
+      titleObserver = new MutationObserver(syncTitle);
+      titleObserver.observe(target, { subtree: true, childList: true, characterData: true });
+    } catch {
+      titleObserver = null;
+    }
+  };
+
+  toggle.addEventListener("click", () => {
+    const visible = passwordInput.type === "text";
+    passwordInput.type = visible ? "password" : "text";
+    toggle.textContent = visible ? "显示" : "隐藏";
+    toggle.setAttribute("aria-label", visible ? "显示密码" : "隐藏密码");
+    passwordInput.focus();
+  });
+
+  lock.addEventListener("click", reset);
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const password = passwordInput.value;
+    if (!password) {
+      setStatus("请输入访问密码", "error");
+      passwordInput.focus();
+      return;
+    }
+    submit.disabled = true;
+    passwordInput.disabled = true;
+    toggle.disabled = true;
+    progressBar.hidden = false;
+    setStatus("正在准备加密数据");
+    try {
+      const manifest = await manifestPromise;
+      const session = await createSecureSession(password, manifest, state => {
+        progressBar.value = state.value;
+        setStatus(state.message);
+      });
+      clearSession();
+      activeSession = session;
+      detachBridge = attachModuleBridge(session, frame, state => {
+        workspaceStatus.textContent = state.busy ? state.message : "";
+      });
+      shell.hidden = true;
+      workspace.hidden = false;
+      workspaceStatus.textContent = "正在打开平台";
+      await new Promise((resolve, reject) => {
+        frame.addEventListener("load", resolve, { once: true });
+        frame.addEventListener("error", () => reject(new Error("应用页面加载失败")), { once: true });
+        frame.srcdoc = session.appHtml;
+      });
+      observeAppTitle();
+      workspaceStatus.textContent = "";
+      passwordInput.value = "";
+      schedulePrefetch(session);
+    } catch (error) {
+      clearSession();
+      passwordInput.value = "";
+      document.title = LOGIN_TITLE;
+      setStatus(error instanceof Error ? error.message : "无法打开加密站点", "error");
+      progressBar.hidden = true;
+      progressBar.value = 0;
+      passwordInput.focus();
+      if (/清单|下载/.test(String(error))) manifestPromise = fetchManifest();
+    } finally {
+      submit.disabled = false;
+      passwordInput.disabled = false;
+      toggle.disabled = false;
+    }
+  });
+
+  window.addEventListener("beforeunload", clearSession);
+  manifestPromise.then(
+    () => setStatus("请输入访问密码"),
+    error => setStatus(error instanceof Error ? error.message : "站点初始化失败", "error")
+  );
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindShell, { once: true });
+else bindShell();
