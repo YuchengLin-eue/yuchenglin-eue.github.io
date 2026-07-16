@@ -32,7 +32,14 @@ const MODE_QUERIES = Object.freeze({
   mechatronics: "?embed=1"
 });
 
-const PREFETCH_ORDER = Object.freeze(["quote", "inventory", "pom", "mechatronics"]);
+const MODULE_LABELS = Object.freeze({
+  quote: "报价单",
+  inventory: "库存计划",
+  pom: "零件运营管理分析",
+  mechatronics: "机电项目统计"
+});
+
+const PREFETCH_ORDER = Object.freeze(["inventory", "pom", "mechatronics", "quote"]);
 const MAX_RECORD_BYTES = 256 * 1024 * 1024;
 const ACCOUNT_NAME = "lu.wei";
 const SESSION_DB_NAME = "secure-pages-session-v1";
@@ -407,6 +414,13 @@ function injectAfterHead(html, source) {
   return `${html.slice(0, offset)}${source}${html.slice(offset)}`;
 }
 
+function injectBeforeBodyEnd(html, source) {
+  const matches = Array.from(html.matchAll(/<\/body\s*>/gi));
+  if (!matches.length) return `${html}${source}`;
+  const offset = matches[matches.length - 1].index;
+  return `${html.slice(0, offset)}${source}${html.slice(offset)}`;
+}
+
 function patchScriptQueries(html, query) {
   return html.replace(/(<script\b[^>]*>)([\s\S]*?)(<\/script\s*>)/gi, (match, opening, code, closing) => {
     const replacement = JSON.stringify(query);
@@ -419,10 +433,14 @@ function patchScriptQueries(html, query) {
 
 export function prepareModuleHtml(moduleId, html) {
   const query = MODE_QUERIES[moduleId];
-  if (!query) return html;
-  const mode = moduleId === "inventory" ? "standalone" : "embed";
-  const bootstrap = `<script>(function(){var q=${JSON.stringify(query)},m=${JSON.stringify(mode)};window.__SECURE_PAGE_MODE__=m;document.documentElement.dataset.secureMode=m;if(m==="embed"){document.documentElement.dataset.embed="1";document.documentElement.classList.add("is-embedded")}else{document.documentElement.dataset.standalone="1"}try{history.replaceState(null,"",location.pathname+q+location.hash)}catch(e){}})();<\/script>`;
-  return injectAfterHead(patchScriptQueries(html, query), bootstrap);
+  const mode = query ? (moduleId === "inventory" ? "standalone" : "embed") : "";
+  const label = MODULE_LABELS[moduleId] || "功能模块";
+  const modeBootstrap = query ? `<script>(function(){var q=${JSON.stringify(query)},m=${JSON.stringify(mode)};window.__SECURE_PAGE_MODE__=m;document.documentElement.dataset.secureMode=m;if(m==="embed"){document.documentElement.dataset.embed="1";document.documentElement.classList.add("is-embedded")}else{document.documentElement.dataset.standalone="1"}try{history.replaceState(null,"",location.pathname+q+location.hash)}catch(e){}})();<\/script>` : "";
+  const loadingBootstrap = `<script>document.documentElement.dataset.secureModuleLoading=${JSON.stringify(moduleId)};<\/script><style>html[data-secure-module-loading]{background:#f4f7fa!important}html[data-secure-module-loading] body{opacity:0!important;pointer-events:none!important}html[data-secure-module-loading]::before{content:${JSON.stringify(`正在打开${label}`)};position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;padding-top:54px;background:#f4f7fa;color:#31536f;font:700 14px/1.5 "Microsoft YaHei UI","Segoe UI",sans-serif}html[data-secure-module-loading]::after{content:"";position:fixed;z-index:2147483647;left:50%;top:calc(50% - 20px);width:26px;height:26px;margin:-13px;border:3px solid #c8d4d0;border-top-color:#246a5a;border-radius:50%;animation:secureModuleSpin .8s linear infinite}@keyframes secureModuleSpin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){html[data-secure-module-loading]::after{animation-duration:1.8s}}</style>`;
+  const waitsForContent = moduleId === "quote" || moduleId === "inventory";
+  const readyBridge = `<script>(function(){var d=document.documentElement,m=${JSON.stringify(moduleId)},wait=${JSON.stringify(waitsForContent)},done=false,timer=0;function finish(){if(done)return;done=true;clearTimeout(timer);delete d.dataset.secureModuleLoading;d.dataset.secureModuleReady=m;try{parent.postMessage({type:"secure-module-ready",module:m},"*")}catch(e){}}function ready(){requestAnimationFrame(function(){requestAnimationFrame(finish)})}if(wait){if(d.dataset.secureContentReady==="1")ready();else addEventListener("secure-module-content-ready",ready,{once:true})}else if(document.readyState==="complete")ready();else addEventListener("load",ready,{once:true});timer=setTimeout(finish,20000)})();<\/script>`;
+  const output = query ? patchScriptQueries(html, query) : html;
+  return injectBeforeBodyEnd(injectAfterHead(output, `${loadingBootstrap}${modeBootstrap}`), readyBridge);
 }
 
 export function prepareAppHtml(html) {
@@ -691,6 +709,7 @@ function connectionAllowsPrefetch() {
 function bindShell() {
   const form = document.querySelector("[data-unlock-form]");
   if (!form) return;
+  const startup = document.querySelector("[data-startup]");
   const shell = document.querySelector("[data-login-shell]");
   const workspace = document.querySelector("[data-workspace]");
   const frame = document.querySelector("[data-app-frame]");
@@ -699,6 +718,7 @@ function bindShell() {
   const rememberInput = document.querySelector("[data-remember]");
   const toggle = document.querySelector("[data-toggle-password]");
   const submit = document.querySelector("[data-submit]");
+  const feedback = document.querySelector("[data-feedback]");
   const status = document.querySelector("[data-status]");
   const progressBar = document.querySelector("[data-progress]");
   const workspaceStatus = document.querySelector("[data-workspace-status]");
@@ -745,6 +765,7 @@ function bindShell() {
     form.dataset.state = field;
     accountInput.setAttribute("aria-invalid", String(field === "account-error"));
     passwordInput.setAttribute("aria-invalid", String(field === "password-error"));
+    feedback.hidden = !message && progressBar.hidden;
   };
 
   const setBusy = (busy, label = "正在验证") => {
@@ -752,7 +773,7 @@ function bindShell() {
     form.setAttribute("aria-busy", String(busy));
     submit.disabled = busy;
     submit.dataset.busy = String(busy);
-    submit.textContent = busy ? label : "进入平台";
+    submit.textContent = busy ? label : "登录";
     accountInput.disabled = busy;
     passwordInput.disabled = busy;
     rememberInput.disabled = busy;
@@ -1002,6 +1023,27 @@ function bindShell() {
     }
   };
 
+  const showLogin = () => {
+    startup.hidden = true;
+    workspace.hidden = true;
+    shell.hidden = false;
+    resumeCharacterScene();
+  };
+
+  const showWorkspaceLoading = () => {
+    shell.hidden = true;
+    workspace.hidden = false;
+    startup.hidden = false;
+    pauseCharacterScene();
+  };
+
+  const showWorkspace = () => {
+    startup.hidden = true;
+    shell.hidden = true;
+    workspace.hidden = false;
+    pauseCharacterScene();
+  };
+
   const cancelPrefetch = () => {
     if (prefetchHandle === null) return;
     if (prefetchIsIdle && typeof cancelIdleCallback === "function") cancelIdleCallback(prefetchHandle);
@@ -1061,17 +1103,15 @@ function bindShell() {
 
   const reset = () => {
     clearSession();
-    workspace.hidden = true;
-    shell.hidden = false;
     accountInput.value = ACCOUNT_NAME;
     passwordInput.value = "";
     resetPasswordVisibility();
     progressBar.value = 0;
     progressBar.hidden = true;
     document.title = LOGIN_TITLE;
-    setStatus("请输入账号与平台访问密码");
+    setStatus("");
+    showLogin();
     passwordInput.focus();
-    resumeCharacterScene();
   };
 
   const syncTitle = () => {
@@ -1106,7 +1146,7 @@ function bindShell() {
   });
 
   const clearFieldError = () => {
-    if (status.dataset.type === "error") setStatus("请输入账号与平台访问密码");
+    if (status.dataset.type === "error") setStatus("");
   };
 
   accountInput.addEventListener("input", () => {
@@ -1155,9 +1195,7 @@ function bindShell() {
     detachBridge = attachModuleBridge(session, frame, state => {
       workspaceStatus.textContent = state.busy ? state.message : "";
     });
-    shell.hidden = true;
-    workspace.hidden = false;
-    pauseCharacterScene();
+    showWorkspaceLoading();
     workspaceStatus.textContent = "正在打开平台";
     await new Promise((resolve, reject) => {
       let cancelActivation = null;
@@ -1199,6 +1237,7 @@ function bindShell() {
       frame.srcdoc = session.appHtml;
     });
     observeAppTitle();
+    showWorkspace();
     workspaceStatus.textContent = "";
   };
 
@@ -1243,8 +1282,6 @@ function bindShell() {
       const message = error instanceof Error ? error.message : "无法打开加密站点";
       if (operationEpoch !== sessionEpoch || message === "登录已取消") return false;
       clearSession();
-      workspace.hidden = true;
-      shell.hidden = false;
       passwordInput.value = "";
       resetPasswordVisibility();
       document.title = LOGIN_TITLE;
@@ -1256,6 +1293,7 @@ function bindShell() {
       }
       progressBar.hidden = true;
       progressBar.value = 0;
+      showLogin();
       requestAnimationFrame(() => {
         if (!shell.hidden) passwordInput.focus();
       });
@@ -1304,8 +1342,10 @@ function bindShell() {
       const remembered = await readRememberedSession(manifest);
       if (startupRestoreCancelled || !remembered) {
         startupChecking = false;
+        setStatus("");
+        showLogin();
         setBusy(false);
-        setStatus("请输入账号与平台访问密码");
+        passwordInput.focus();
         return;
       }
       accountInput.value = ACCOUNT_NAME;
@@ -1316,8 +1356,10 @@ function bindShell() {
     },
     error => {
       startupChecking = false;
-      setBusy(false);
       setStatus(error instanceof Error ? error.message : "站点初始化失败", "error");
+      showLogin();
+      setBusy(false);
+      passwordInput.focus();
     }
   );
 }
