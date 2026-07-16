@@ -6,84 +6,177 @@
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#163f37">
-  <title>安全访问 | 备件运营管理平台</title>
+  <meta name="theme-color" content="#155ca8">
+  <title>安全访问 | 备件库存结构分析平台</title>
   <style>
-    :root{font-family:"Microsoft YaHei UI","Segoe UI",Arial,sans-serif;color:#182421;background:#edf1f0;font-synthesis:none}
+    :root{font-family:"Microsoft YaHei UI","Segoe UI",Arial,sans-serif;color:#17212b;background:#edf1f5;font-synthesis:none}
     *{box-sizing:border-box;letter-spacing:0}
-    html,body{width:100%;height:100%;margin:0}
+    html,body{width:100%;height:100%;min-height:100%;margin:0}
     body{min-width:280px}
     button,input{font:inherit}
     button{cursor:pointer}
-    button:disabled{cursor:wait;opacity:.62}
+    button:disabled{cursor:wait}
     [hidden]{display:none!important}
-    .login{min-height:100%;display:grid;grid-template-rows:64px 1fr 48px;background:#edf1f0}
-    .brandbar{display:flex;align-items:center;padding:0 clamp(20px,4vw,56px);background:#fff;border-bottom:1px solid #d7dfdc}
-    .brandmark{display:grid;place-items:center;width:34px;height:34px;margin-right:12px;border-radius:6px;background:#163f37;color:#fff;font-size:16px;font-weight:700}
-    .brandname{font-size:17px;font-weight:700;color:#17342e}
-    .brandsub{margin-left:12px;padding-left:12px;border-left:1px solid #ccd6d2;color:#65736f;font-size:13px}
-    .main{display:grid;place-items:center;padding:28px 18px}
-    .panel{width:min(100%,420px);background:#fff;border:1px solid #ced8d4;border-radius:8px;box-shadow:0 12px 32px rgba(20,48,41,.1);padding:32px}
-    .eyebrow{margin:0 0 8px;color:#65736f;font-size:12px;font-weight:700}
-    h1{margin:0;color:#17342e;font-size:25px;line-height:1.35}
-    .lead{margin:10px 0 26px;color:#64726e;font-size:14px;line-height:1.7}
-    label{display:block;margin-bottom:8px;color:#263b35;font-size:13px;font-weight:700}
-    .password{display:grid;grid-template-columns:1fr auto;height:44px;border:1px solid #aebdb8;border-radius:6px;background:#fff;overflow:hidden;transition:border-color .15s,box-shadow .15s}
-    .password:focus-within{border-color:#246a5a;box-shadow:0 0 0 3px rgba(36,106,90,.12)}
-    .password input{width:100%;min-width:0;border:0;outline:0;padding:0 13px;color:#172a25;background:transparent}
-    .toggle{min-width:58px;border:0;border-left:1px solid #d8dfdd;background:#f7f9f8;color:#36564e;font-size:13px}
-    .primary{width:100%;height:44px;margin-top:16px;border:1px solid #163f37;border-radius:6px;background:#163f37;color:#fff;font-weight:700}
-    .primary:hover:not(:disabled){background:#0f332c}
-    .primary:focus-visible,.toggle:focus-visible,.lock:focus-visible{outline:3px solid rgba(36,106,90,.22);outline-offset:2px}
-    .progress{width:100%;height:6px;margin:18px 0 0;display:block;accent-color:#246a5a}
-    .status{min-height:22px;margin:10px 0 0;color:#65736f;font-size:13px;line-height:1.6}
-    .status[data-type="error"]{color:#a12c2c}
-    .security{display:flex;gap:8px;align-items:flex-start;margin-top:20px;padding-top:18px;border-top:1px solid #e2e7e5;color:#71807b;font-size:12px;line-height:1.6}
-    .security b{display:grid;place-items:center;flex:0 0 20px;height:20px;border:1px solid #aebdb8;border-radius:50%;color:#36564e;font-size:11px}
-    .footer{display:flex;align-items:center;justify-content:center;color:#7b8985;font-size:12px}
+    .login{min-height:100vh;min-height:100dvh;display:grid;grid-template-rows:64px minmax(0,1fr) 42px;background:#edf1f5}
+    .brandbar{background:#fff;border-bottom:1px solid #d8dee5}
+    .brandbar-inner{width:min(100%,1280px);height:100%;margin:0 auto;padding:0 28px;display:flex;align-items:center;justify-content:space-between}
+    .brand{min-width:0;display:flex;align-items:center;gap:12px}
+    .brandmark{width:36px;height:36px;flex:0 0 36px;padding:7px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;border-radius:6px;background:#17324d}
+    .brandmark i{display:block;border-radius:1px;background:#fff}
+    .brandmark i:nth-child(2){background:#73b7eb}
+    .brandmark i:nth-child(3){background:#f1b458}
+    .brandmark i:nth-child(4){background:#56b8a5}
+    .brandcopy{min-width:0;display:flex;align-items:center;gap:12px}
+    .brandname{color:#17212b;font-size:17px;font-weight:700;white-space:nowrap}
+    .brandsub{padding-left:12px;border-left:1px solid #d7dde3;color:#68747f;font-size:12px;white-space:nowrap}
+    .accessmeta{display:flex;align-items:center;gap:8px;color:#586673;font-size:12px}
+    .accessmeta::before{content:"";width:8px;height:8px;border-radius:50%;background:#279071;box-shadow:0 0 0 4px rgba(39,144,113,.12)}
+    .main{min-height:0;display:grid;place-items:center;padding:28px}
+    .auth-shell{width:min(100%,1160px);min-height:580px;display:grid;grid-template-columns:minmax(0,1.12fr) minmax(420px,.88fr);overflow:hidden;border:1px solid #d6dde4;border-radius:8px;background:#fff;box-shadow:0 18px 48px rgba(22,36,50,.12)}
+    .identity-pane{position:relative;min-width:0;overflow:hidden;padding:68px 64px;background:#155ca8;color:#fff}
+    .identity-pane::before{content:"";position:absolute;inset:28px;border:1px solid rgba(255,255,255,.14);border-radius:6px;pointer-events:none}
+    .identity-copy{position:relative;z-index:2;max-width:430px}
+    .identity-tag{margin:0 0 16px;color:#d9ebfb;font-size:13px;font-weight:700}
+    .identity-title{max-width:410px;margin:0;color:#fff;font-size:38px;line-height:1.35;font-weight:700}
+    .identity-note{margin:18px 0 0;color:#d9ebfb;font-size:14px;line-height:1.7}
+    .inventory-visual{position:absolute;right:48px;bottom:44px;width:430px;height:252px;z-index:1}
+    .visual-base{position:absolute;left:10px;right:0;bottom:0;height:2px;background:rgba(255,255,255,.46)}
+    .module{position:absolute;bottom:2px;border:1px solid rgba(255,255,255,.2);border-radius:8px 8px 2px 2px;box-shadow:0 18px 28px rgba(7,34,65,.22);transform-origin:center bottom;animation:module-enter .5s cubic-bezier(.2,.75,.25,1) both}
+    .module::before{content:"";position:absolute;top:22px;left:22px;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.92);box-shadow:17px 0 0 rgba(255,255,255,.92)}
+    .module::after{content:"";position:absolute;top:43px;left:22px;width:34px;height:3px;border-radius:2px;background:rgba(255,255,255,.58)}
+    .module-back{left:194px;width:98px;height:228px;background:#7462dc;animation-delay:.05s}
+    .module-dark{left:164px;width:94px;height:166px;background:#23313f;animation-delay:.12s}
+    .module-warm{left:18px;width:164px;height:126px;background:#f08b61;animation-delay:.19s}
+    .module-gold{left:266px;width:126px;height:154px;background:#efd458;animation-delay:.26s}
+    .module-gold::before,.module-gold::after{background:#3d4650;box-shadow:17px 0 0 #3d4650}
+    .module-gold::after{box-shadow:none;opacity:.72}
+    .auth-pane{min-width:0;display:flex;align-items:center;justify-content:center;padding:54px 52px;background:#fff}
+    .auth-form{width:min(100%,390px)}
+    .auth-kicker{margin:0 0 12px;color:#155ca8;font-size:13px;font-weight:700}
+    .auth-title{margin:0;color:#17212b;font-size:29px;line-height:1.35}
+    .lead{margin:10px 0 30px;color:#68747f;font-size:14px;line-height:1.7}
+    label{display:block;margin-bottom:9px;color:#2b3742;font-size:13px;font-weight:700}
+    .field+.field{margin-top:16px}
+    .textfield{height:48px;border:1px solid #aeb9c4;border-radius:6px;background:#fff;overflow:hidden;transition:border-color .15s,box-shadow .15s,background-color .15s}
+    .textfield:focus-within{border-color:#155ca8;box-shadow:0 0 0 3px rgba(21,92,168,.13)}
+    .textfield input{width:100%;height:100%;border:0;outline:0;padding:0 14px;color:#17212b;background:transparent}
+    .textfield input:disabled{background:#f5f7f9}
+    .password{display:grid;grid-template-columns:minmax(0,1fr) 50px;height:48px;border:1px solid #aeb9c4;border-radius:6px;background:#fff;overflow:hidden;transition:border-color .15s,box-shadow .15s,background-color .15s}
+    .password:focus-within{border-color:#155ca8;box-shadow:0 0 0 3px rgba(21,92,168,.13)}
+    .password input{width:100%;min-width:0;border:0;outline:0;padding:0 14px;color:#17212b;background:transparent}
+    .password input:disabled{background:#f5f7f9}
+    .toggle{position:relative;width:50px;border:0;border-left:1px solid #d8dee5;background:#f7f9fb;color:#435568}
+    .toggle::before{content:"";position:absolute;left:15px;top:17px;width:18px;height:12px;border:2px solid currentColor;border-radius:50%}
+    .toggle::after{content:"";position:absolute;left:22px;top:21px;width:6px;height:6px;border-radius:50%;background:currentColor}
+    .toggle[data-visible="true"]{color:#155ca8;background:#edf5fc}
+    .toggle:disabled{color:#95a0aa;background:#f4f6f8}
+    .auth-form[data-state="password-error"] .password{border-color:#b42318;background:#fff8f7;box-shadow:0 0 0 3px rgba(180,35,24,.09)}
+    .auth-form[data-state="account-error"] .textfield{border-color:#b42318;background:#fff8f7;box-shadow:0 0 0 3px rgba(180,35,24,.09)}
+    .remember-row{margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .remember{min-width:0;margin:0;display:flex;align-items:center;gap:9px;color:#43515e;font-size:12px;font-weight:600;cursor:pointer}
+    .remember input{width:16px;height:16px;margin:0;accent-color:#155ca8}
+    .device-note{color:#5f6c78;font-size:12px;white-space:nowrap}
+    .primary{width:100%;height:48px;margin-top:18px;display:flex;align-items:center;justify-content:center;gap:9px;border:1px solid #155ca8;border-radius:6px;background:#155ca8;color:#fff;font-weight:700;transition:background-color .15s,border-color .15s,box-shadow .15s}
+    .primary:hover:not(:disabled){background:#0f4f91;border-color:#0f4f91}
+    .primary:disabled{background:#18558f;border-color:#18558f;color:#eaf3fb}
+    .primary[data-busy="true"]::before{content:"";width:15px;height:15px;border:2px solid rgba(255,255,255,.42);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+    .primary:focus-visible,.toggle:focus-visible,.lock:focus-visible{outline:3px solid rgba(21,92,168,.22);outline-offset:2px}
+    .feedback{min-height:48px;margin-top:14px}
+    .progress{appearance:none;width:100%;height:4px;margin:0 0 9px;display:block;border:0;border-radius:2px;overflow:hidden;background:#e5eaf0;accent-color:#155ca8}
+    .progress::-webkit-progress-bar{background:#e5eaf0}
+    .progress::-webkit-progress-value{background:#155ca8}
+    .progress::-moz-progress-bar{background:#155ca8}
+    .status{min-height:22px;margin:0;color:#64717d;font-size:13px;line-height:1.65}
+    .status[data-type="error"]{color:#b42318}
+    .security{display:flex;gap:10px;align-items:flex-start;margin-top:6px;padding-top:18px;border-top:1px solid #e1e6eb;color:#5e6b77;font-size:12px;line-height:1.65}
+    .securityicon{position:relative;flex:0 0 20px;width:20px;height:20px;margin-top:1px}
+    .securityicon::before{content:"";position:absolute;left:6px;top:1px;width:8px;height:8px;border:2px solid #278267;border-bottom:0;border-radius:7px 7px 0 0}
+    .securityicon::after{content:"";position:absolute;left:3px;bottom:1px;width:14px;height:11px;border-radius:3px;background:#278267}
+    .footer{display:flex;align-items:center;justify-content:center;gap:7px;padding:0 18px;color:#5f6c78;font-size:12px}
     .workspace{height:100%;background:#fff}
-    .workspacebar{height:44px;display:flex;align-items:center;gap:14px;padding:0 12px 0 16px;border-bottom:1px solid #d5dedb;background:#fff;color:#17342e}
+    .workspacebar{height:44px;display:flex;align-items:center;gap:14px;padding:0 12px 0 16px;border-bottom:1px solid #d8dee5;background:#fff;color:#17212b}
     .workspacetitle{font-size:14px;font-weight:700}
-    .workspacestatus{min-width:0;margin-left:auto;color:#66756f;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .lock{height:30px;padding:0 11px;border:1px solid #b9c6c2;border-radius:5px;background:#f7f9f8;color:#314d46;font-size:12px}
+    .workspacestatus{min-width:0;margin-left:auto;color:#65727e;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .lock{height:30px;padding:0 11px;border:1px solid #b9c3cd;border-radius:5px;background:#f7f9fb;color:#34475a;font-size:12px}
     .appframe{display:block;width:100%;height:calc(100% - 44px);border:0;background:#fff}
-    @media(max-width:520px){.login{grid-template-rows:56px 1fr 40px}.brandbar{padding:0 16px}.brandsub{display:none}.main{align-items:start;padding:18px 12px}.panel{padding:24px 20px}h1{font-size:22px}}
-    @media(prefers-reduced-motion:no-preference){.panel{animation:enter .24s ease-out}@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}}
+    @keyframes module-enter{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:900px){.auth-shell{width:min(100%,540px);min-height:520px;grid-template-columns:1fr}.identity-pane{display:none}.auth-pane{padding:48px 44px}}
+    @media(max-width:520px){.login{grid-template-rows:58px minmax(0,1fr) auto}.brandbar-inner{padding:0 16px}.brandmark{width:34px;height:34px;flex-basis:34px}.brandcopy{gap:0}.brandname{font-size:15px}.brandsub,.accessmeta{display:none}.main{align-items:start;padding:12px 0}.auth-shell{min-height:0;border:0;border-radius:0;box-shadow:none}.auth-pane{min-height:560px;align-items:flex-start;padding:34px 22px}.auth-title{font-size:26px}.lead{margin-bottom:24px}.device-note{display:none}.footer{min-height:38px;padding:8px 14px calc(8px + env(safe-area-inset-bottom));text-align:center}}
+    @media(max-width:360px){.brandbar-inner{padding:0 12px}.brand{gap:9px}.brandname{font-size:14px}.auth-pane{padding-left:18px;padding-right:18px}}
+    @media(max-height:650px) and (min-width:901px){.main{align-items:start;padding-top:18px;padding-bottom:18px}.auth-shell{min-height:520px}.identity-pane{padding-top:48px}.inventory-visual{transform:scale(.86);transform-origin:right bottom}}
+    @media(prefers-reduced-motion:reduce){.module,.primary[data-busy="true"]::before{animation:none}}
   </style>
 </head>
 <body>
   <section class="login" data-login-shell>
     <header class="brandbar">
-      <span class="brandmark" aria-hidden="true">备</span>
-      <span class="brandname">备件运营管理平台</span>
-      <span class="brandsub">安全访问</span>
+      <div class="brandbar-inner">
+        <div class="brand">
+          <span class="brandmark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="brandcopy"><strong class="brandname">备件库存结构分析平台</strong><span class="brandsub">企业内部系统</span></span>
+        </div>
+        <div class="accessmeta">安全访问</div>
+      </div>
     </header>
     <main class="main">
-      <form class="panel" data-unlock-form>
-        <p class="eyebrow">ENCRYPTED WORKSPACE</p>
-        <h1>打开工作平台</h1>
-        <p class="lead">输入访问密码后，业务模块将在当前设备内完成解密。</p>
-        <label for="access-password">访问密码</label>
-        <div class="password">
-          <input id="access-password" data-password type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required autofocus>
-          <button class="toggle" data-toggle-password type="button" aria-label="显示密码" title="显示或隐藏密码">显示</button>
-        </div>
-        <button class="primary" data-submit type="submit">进入平台</button>
-        <progress class="progress" data-progress max="100" value="0" hidden></progress>
-        <p class="status" data-status role="status" aria-live="polite">正在检查站点</p>
-        <div class="security"><b aria-hidden="true">i</b><span>密码不会上传或写入站点文件，解密仅在浏览器内进行。</span></div>
-      </form>
+      <div class="auth-shell">
+        <section class="identity-pane" aria-labelledby="product-title">
+          <div class="identity-copy">
+            <p class="identity-tag">企业备件业务工作台</p>
+            <h1 class="identity-title" id="product-title">备件库存结构分析平台</h1>
+            <p class="identity-note">内部业务系统 · 授权用户访问</p>
+          </div>
+          <div class="inventory-visual" aria-hidden="true">
+            <span class="visual-base"></span>
+            <span class="module module-back"></span>
+            <span class="module module-dark"></span>
+            <span class="module module-warm"></span>
+            <span class="module module-gold"></span>
+          </div>
+        </section>
+        <section class="auth-pane">
+          <form class="auth-form" data-unlock-form aria-labelledby="auth-title" aria-busy="false">
+            <p class="auth-kicker">企业安全访问</p>
+            <h2 class="auth-title" id="auth-title">欢迎登录</h2>
+            <p class="lead">请输入账号与平台访问密码</p>
+            <div class="field">
+              <label for="access-account">账号</label>
+              <div class="textfield">
+                <input id="access-account" data-account type="text" value="lu.wei" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="login-status" aria-invalid="false">
+              </div>
+            </div>
+            <div class="field">
+              <label for="access-password">平台访问密码</label>
+              <div class="password">
+                <input id="access-password" data-password type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required aria-describedby="login-status access-help" aria-invalid="false">
+                <button class="toggle" data-toggle-password data-visible="false" type="button" aria-label="显示密码" aria-pressed="false" title="显示或隐藏密码"></button>
+              </div>
+            </div>
+            <div class="remember-row">
+              <label class="remember"><input data-remember type="checkbox" checked><span>在此设备保持登录</span></label>
+              <span class="device-note">仅限个人设备</span>
+            </div>
+            <button class="primary" data-submit data-busy="false" type="submit">进入平台</button>
+            <div class="feedback">
+              <progress class="progress" data-progress max="100" value="0" aria-label="登录加载进度" hidden></progress>
+              <p class="status" id="login-status" data-status role="status" aria-live="polite">正在检查站点</p>
+            </div>
+            <div class="security" id="access-help"><span class="securityicon" aria-hidden="true"></span><span>密码仅用于当前浏览器解密，不会上传。</span></div>
+          </form>
+        </section>
+      </div>
     </main>
-    <footer class="footer">Protected local decryption</footer>
+    <footer class="footer"><span>备件库存结构分析平台</span><span aria-hidden="true">·</span><span>安全访问门户</span></footer>
   </section>
   <section class="workspace" data-workspace hidden>
     <header class="workspacebar">
-      <span class="workspacetitle">备件运营管理平台</span>
+      <span class="workspacetitle">备件库存结构分析平台</span>
       <span class="workspacestatus" data-workspace-status role="status" aria-live="polite"></span>
       <button class="lock" data-lock type="button" title="关闭当前会话">锁定</button>
     </header>
-    <iframe class="appframe" data-app-frame title="备件运营管理平台"></iframe>
+    <iframe class="appframe" data-app-frame title="备件库存结构分析平台"></iframe>
   </section>
-  <script type="module" src="secure-loader-v2.js?v=2.1"></script>
+  <script type="module" src="secure-loader-v2.js?v=3.0"></script>
 </body>
 </html>

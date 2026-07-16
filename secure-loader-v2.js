@@ -34,8 +34,13 @@ const MODE_QUERIES = Object.freeze({
 
 const PREFETCH_ORDER = Object.freeze(["quote", "inventory", "pom", "mechatronics"]);
 const MAX_RECORD_BYTES = 256 * 1024 * 1024;
-const LOGIN_TITLE = "安全访问 | 备件运营管理平台";
-const PLATFORM_TITLE = "备件运营管理平台";
+const ACCOUNT_NAME = "lu.wei";
+const SESSION_DB_NAME = "secure-pages-session-v1";
+const SESSION_STORE_NAME = "sessions";
+const SESSION_RECORD_ID = "primary";
+const SESSION_REVOKED_KEY = "secure-pages-session-revoked-v1";
+const LOGIN_TITLE = "安全访问 | 备件库存结构分析平台";
+const PLATFORM_TITLE = "备件库存结构分析平台";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const cipherJobs = new Map();
@@ -104,6 +109,110 @@ async function deriveKey(password, manifest, salt) {
     false,
     ["decrypt"]
   );
+}
+
+function rememberedSessionVersion(manifest) {
+  const app = Array.isArray(manifest?.modules) ? manifest.modules.find(record => record?.id === "app") : null;
+  return `${manifest?.version || ""}:${manifest?.kdf?.salt || ""}:${manifest?.kdf?.iterations || ""}:${app?.sha256 || ""}`;
+}
+
+function openRememberedSessionDb() {
+  if (!("indexedDB" in globalThis)) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(SESSION_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(SESSION_STORE_NAME)) request.result.createObjectStore(SESSION_STORE_NAME, { keyPath: "id" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("无法打开设备登录存储"));
+    request.onblocked = () => reject(new Error("设备登录存储正在被占用"));
+  });
+}
+
+async function useRememberedSessionStore(mode, operation) {
+  const db = await openRememberedSessionDb();
+  if (!db) return null;
+  try {
+    const transaction = db.transaction(SESSION_STORE_NAME, mode);
+    const completed = new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("设备登录存储失败"));
+      transaction.onabort = () => reject(transaction.error || new Error("设备登录存储已取消"));
+    });
+    const result = await operation(transaction.objectStore(SESSION_STORE_NAME));
+    await completed;
+    return result;
+  } finally {
+    db.close();
+  }
+}
+
+function storeRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("设备登录存储失败"));
+  });
+}
+
+function rememberedSessionIsRevoked() {
+  try {
+    return localStorage.getItem(SESSION_REVOKED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setRememberedSessionRevoked(revoked) {
+  try {
+    if (revoked) localStorage.setItem(SESSION_REVOKED_KEY, "1");
+    else localStorage.removeItem(SESSION_REVOKED_KEY);
+  } catch {
+  }
+}
+
+async function saveRememberedSession(key, manifest) {
+  const record = {
+    id: SESSION_RECORD_ID,
+    account: ACCOUNT_NAME,
+    version: rememberedSessionVersion(manifest),
+    key,
+    savedAt: Date.now()
+  };
+  const result = await useRememberedSessionStore("readwrite", store => storeRequest(store.put(record)));
+  if (result === null) throw new Error("当前浏览器不支持长期登录");
+  setRememberedSessionRevoked(false);
+}
+
+async function clearRememberedSession() {
+  setRememberedSessionRevoked(true);
+  if (!("indexedDB" in globalThis)) return true;
+  try {
+    await useRememberedSessionStore("readwrite", store => storeRequest(store.delete(SESSION_RECORD_ID)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readRememberedSession(manifest) {
+  if (rememberedSessionIsRevoked()) {
+    await clearRememberedSession();
+    return null;
+  }
+  try {
+    const record = await useRememberedSessionStore("readonly", store => storeRequest(store.get(SESSION_RECORD_ID)));
+    if (!record) return null;
+    const valid = record.account === ACCOUNT_NAME
+      && record.version === rememberedSessionVersion(manifest)
+      && record.key?.type === "secret"
+      && record.key?.algorithm?.name === "AES-GCM"
+      && Array.from(record.key?.usages || []).includes("decrypt");
+    if (valid) return record;
+    await clearRememberedSession();
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function recordUrl(record) {
@@ -338,13 +447,13 @@ export async function fetchManifest() {
   return response.json();
 }
 
-export async function createSecureSession(password, rawManifest, progress = () => {}) {
+async function createSecureSessionCore(rawManifest, keyProvider, progress, deriveMessage) {
   if (!globalThis.crypto?.subtle) throw new Error("当前浏览器不支持安全解密");
   const { manifest, salt, modules, assets } = validateManifest(rawManifest);
   void pruneCipherCache([...modules.values(), ...assets.values()]);
-  progress({ phase: "derive", value: 4, message: "正在验证访问密码" });
+  progress({ phase: "derive", value: 4, message: deriveMessage });
   const appModule = modules.get("app");
-  const keyPromise = deriveKey(password, manifest, salt);
+  const keyPromise = Promise.resolve().then(() => keyProvider(manifest, salt));
   const encryptedPromise = fetchEncrypted(appModule, (received, total, meta) => {
     progress({ phase: "download", value: 8 + Math.min(68, received / total * 68), message: meta?.cached ? "正在读取本机加密缓存" : "正在下载平台入口" });
   });
@@ -444,6 +553,10 @@ export async function createSecureSession(password, rawManifest, progress = () =
     loadModule,
     loadAsset,
     prefetchModules,
+    async remember() {
+      if (disposed || !key) throw new Error("当前安全会话已关闭");
+      await saveRememberedSession(key, manifest);
+    },
     isLoaded(moduleId) {
       return moduleHtml.has(moduleId);
     },
@@ -457,6 +570,16 @@ export async function createSecureSession(password, rawManifest, progress = () =
       moduleHtml.clear();
     }
   };
+}
+
+export async function createSecureSession(password, rawManifest, progress = () => {}) {
+  return createSecureSessionCore(rawManifest, (manifest, salt) => deriveKey(password, manifest, salt), progress, "正在验证访问密码");
+}
+
+export async function createSecureSessionWithKey(key, rawManifest, progress = () => {}) {
+  const valid = key?.type === "secret" && key?.algorithm?.name === "AES-GCM" && Array.from(key?.usages || []).includes("decrypt");
+  if (!valid) throw new Error("保存的登录已失效");
+  return createSecureSessionCore(rawManifest, () => key, progress, "正在恢复设备登录");
 }
 
 function loaderFrameForSource(source, moduleId, appWindow) {
@@ -571,7 +694,9 @@ function bindShell() {
   const shell = document.querySelector("[data-login-shell]");
   const workspace = document.querySelector("[data-workspace]");
   const frame = document.querySelector("[data-app-frame]");
+  const accountInput = document.querySelector("[data-account]");
   const passwordInput = document.querySelector("[data-password]");
+  const rememberInput = document.querySelector("[data-remember]");
   const toggle = document.querySelector("[data-toggle-password]");
   const submit = document.querySelector("[data-submit]");
   const status = document.querySelector("[data-status]");
@@ -584,10 +709,31 @@ function bindShell() {
   let titleObserver = null;
   let prefetchHandle = null;
   let prefetchIsIdle = false;
+  let unlocking = false;
+  let startupChecking = true;
+  let startupRestoreCancelled = false;
+  let sessionEpoch = 0;
+  let frameGeneration = 0;
+  let cancelFrameActivation = null;
 
-  const setStatus = (message, type = "") => {
+  const setStatus = (message, type = "", field = "") => {
     status.textContent = message;
     status.dataset.type = type;
+    form.dataset.state = field;
+    accountInput.setAttribute("aria-invalid", String(field === "account-error"));
+    passwordInput.setAttribute("aria-invalid", String(field === "password-error"));
+  };
+
+  const setBusy = (busy, label = "正在验证") => {
+    unlocking = busy;
+    form.setAttribute("aria-busy", String(busy));
+    submit.disabled = busy;
+    submit.dataset.busy = String(busy);
+    submit.textContent = busy ? label : "进入平台";
+    accountInput.disabled = busy;
+    passwordInput.disabled = busy;
+    rememberInput.disabled = busy;
+    toggle.disabled = busy;
   };
 
   const cancelPrefetch = () => {
@@ -614,7 +760,13 @@ function bindShell() {
     }
   };
 
-  const clearSession = () => {
+  const clearSession = ({ resetFrame = true } = {}) => {
+    frameGeneration += 1;
+    if (cancelFrameActivation) {
+      const cancel = cancelFrameActivation;
+      cancelFrameActivation = null;
+      cancel();
+    }
     cancelPrefetch();
     if (detachBridge) detachBridge();
     if (titleObserver) titleObserver.disconnect();
@@ -622,20 +774,35 @@ function bindShell() {
     detachBridge = null;
     titleObserver = null;
     activeSession = null;
-    frame.removeAttribute("srcdoc");
-    frame.src = "about:blank";
+    try {
+      frame.contentWindow?.stop();
+    } catch {
+    }
+    if (resetFrame && (frame.hasAttribute("srcdoc") || frame.src !== "about:blank")) {
+      frame.removeAttribute("srcdoc");
+      frame.src = "about:blank";
+    }
     workspaceStatus.textContent = "";
+  };
+
+  const resetPasswordVisibility = () => {
+    passwordInput.type = "password";
+    toggle.dataset.visible = "false";
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.setAttribute("aria-label", "显示密码");
   };
 
   const reset = () => {
     clearSession();
     workspace.hidden = true;
     shell.hidden = false;
+    accountInput.value = ACCOUNT_NAME;
     passwordInput.value = "";
+    resetPasswordVisibility();
     progressBar.value = 0;
     progressBar.hidden = true;
     document.title = LOGIN_TITLE;
-    setStatus("请输入访问密码");
+    setStatus("请输入账号与平台访问密码");
     passwordInput.focus();
   };
 
@@ -663,69 +830,200 @@ function bindShell() {
   toggle.addEventListener("click", () => {
     const visible = passwordInput.type === "text";
     passwordInput.type = visible ? "password" : "text";
-    toggle.textContent = visible ? "显示" : "隐藏";
+    toggle.dataset.visible = String(!visible);
+    toggle.setAttribute("aria-pressed", String(!visible));
     toggle.setAttribute("aria-label", visible ? "显示密码" : "隐藏密码");
     passwordInput.focus();
   });
 
-  lock.addEventListener("click", reset);
+  const clearFieldError = () => {
+    if (status.dataset.type === "error") setStatus("请输入账号与平台访问密码");
+  };
 
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    const password = passwordInput.value;
-    if (!password) {
-      setStatus("请输入访问密码", "error");
-      passwordInput.focus();
-      return;
+  accountInput.addEventListener("input", clearFieldError);
+  passwordInput.addEventListener("input", clearFieldError);
+  rememberInput.addEventListener("change", () => {
+    if (!rememberInput.checked) {
+      void clearRememberedSession().then(cleared => {
+        if (!cleared && !shell.hidden) setStatus("长期登录已停用，但设备登录数据清理失败", "error", "session-error");
+      });
     }
-    submit.disabled = true;
-    passwordInput.disabled = true;
-    toggle.disabled = true;
+  });
+
+  lock.addEventListener("click", () => {
+    sessionEpoch += 1;
+    setRememberedSessionRevoked(true);
+    rememberInput.checked = false;
+    reset();
+    void clearRememberedSession().then(cleared => {
+      if (!cleared) setStatus("平台已锁定，但设备登录数据清理失败，请清理浏览器站点数据", "error", "session-error");
+    });
+  });
+
+  const activateSession = async session => {
+    clearSession({ resetFrame: false });
+    const generation = frameGeneration;
+    activeSession = session;
+    detachBridge = attachModuleBridge(session, frame, state => {
+      workspaceStatus.textContent = state.busy ? state.message : "";
+    });
+    shell.hidden = true;
+    workspace.hidden = false;
+    workspaceStatus.textContent = "正在打开平台";
+    await new Promise((resolve, reject) => {
+      let cancelActivation = null;
+      const cleanup = () => {
+        frame.removeEventListener("load", handleLoad);
+        frame.removeEventListener("error", handleError);
+        if (cancelFrameActivation === cancelActivation) cancelFrameActivation = null;
+      };
+      cancelActivation = () => {
+        cleanup();
+        reject(new Error("登录已取消"));
+      };
+      const handleLoad = () => {
+        if (generation !== frameGeneration) {
+          cleanup();
+          reject(new Error("登录已取消"));
+          return;
+        }
+        try {
+          if (frame.contentWindow?.location?.href !== "about:srcdoc" || frame.contentDocument?.readyState !== "complete" || frame.srcdoc !== session.appHtml) return;
+        } catch {
+          return;
+        }
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        if (generation !== frameGeneration) {
+          cleanup();
+          reject(new Error("登录已取消"));
+          return;
+        }
+        cleanup();
+        reject(new Error("应用页面加载失败"));
+      };
+      cancelFrameActivation = cancelActivation;
+      frame.addEventListener("load", handleLoad);
+      frame.addEventListener("error", handleError);
+      frame.srcdoc = session.appHtml;
+    });
+    observeAppTitle();
+    workspaceStatus.textContent = "";
+  };
+
+  const unlock = async ({ password = "", key = null, remember = false, automatic = false }) => {
+    if (unlocking) return false;
+    const operationEpoch = sessionEpoch;
+    setBusy(true, automatic ? "正在恢复登录" : "正在验证");
     progressBar.hidden = false;
-    setStatus("正在准备加密数据");
+    setStatus(automatic ? "正在恢复设备登录" : "正在准备加密数据");
+    let session = null;
     try {
       const manifest = await manifestPromise;
-      const session = await createSecureSession(password, manifest, state => {
+      const updateProgress = state => {
         progressBar.value = state.value;
         setStatus(state.message);
-      });
-      clearSession();
-      activeSession = session;
-      detachBridge = attachModuleBridge(session, frame, state => {
-        workspaceStatus.textContent = state.busy ? state.message : "";
-      });
-      shell.hidden = true;
-      workspace.hidden = false;
-      workspaceStatus.textContent = "正在打开平台";
-      await new Promise((resolve, reject) => {
-        frame.addEventListener("load", resolve, { once: true });
-        frame.addEventListener("error", () => reject(new Error("应用页面加载失败")), { once: true });
-        frame.srcdoc = session.appHtml;
-      });
-      observeAppTitle();
-      workspaceStatus.textContent = "";
+      };
+      session = key
+        ? await createSecureSessionWithKey(key, manifest, updateProgress)
+        : await createSecureSession(password, manifest, updateProgress);
+      await activateSession(session);
+      if (remember && !automatic) {
+        try {
+          await session.remember();
+        } catch {
+          if (activeSession === session) workspaceStatus.textContent = "当前浏览器未能保存长期登录";
+          setTimeout(() => {
+            if (activeSession === session) workspaceStatus.textContent = "";
+          }, 4000);
+        }
+      } else if (!automatic) {
+        const cleared = await clearRememberedSession();
+        if (!cleared) workspaceStatus.textContent = "长期登录已停用，但设备登录数据清理失败";
+      }
+      if (operationEpoch !== sessionEpoch || activeSession !== session) {
+        await clearRememberedSession();
+        return false;
+      }
       passwordInput.value = "";
       schedulePrefetch(session);
+      return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "无法打开加密站点";
+      if (operationEpoch !== sessionEpoch || message === "登录已取消") return false;
       clearSession();
+      workspace.hidden = true;
+      shell.hidden = false;
       passwordInput.value = "";
+      resetPasswordVisibility();
       document.title = LOGIN_TITLE;
-      setStatus(error instanceof Error ? error.message : "无法打开加密站点", "error");
+      if (automatic) {
+        if (/密码不正确|登录已失效|数据已损坏|版本不匹配/.test(message)) await clearRememberedSession();
+        setStatus(/下载|清单/.test(message) ? message : "保存的登录已失效，请重新登录", "error", "session-error");
+      } else {
+        setStatus(message, "error", /密码不正确/.test(message) ? "password-error" : "session-error");
+      }
       progressBar.hidden = true;
       progressBar.value = 0;
       passwordInput.focus();
       if (/清单|下载/.test(String(error))) manifestPromise = fetchManifest();
+      return false;
     } finally {
-      submit.disabled = false;
-      passwordInput.disabled = false;
-      toggle.disabled = false;
+      setBusy(false);
     }
+  };
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (startupChecking) {
+      startupRestoreCancelled = true;
+      return;
+    }
+    const account = accountInput.value.trim().toLowerCase();
+    const password = passwordInput.value;
+    if (!account) {
+      setStatus("请输入账号", "error", "account-error");
+      accountInput.focus();
+      return;
+    }
+    if (account !== ACCOUNT_NAME) {
+      setStatus("账号或密码不正确", "error", "account-error");
+      accountInput.focus();
+      return;
+    }
+    if (!password) {
+      setStatus("请输入平台访问密码", "error", "password-error");
+      passwordInput.focus();
+      return;
+    }
+    await unlock({ password, remember: rememberInput.checked });
   });
 
+  setBusy(true, "正在检查");
+  setStatus("正在检查已保存的登录");
   window.addEventListener("beforeunload", clearSession);
   manifestPromise.then(
-    () => setStatus("请输入访问密码"),
-    error => setStatus(error instanceof Error ? error.message : "站点初始化失败", "error")
+    async manifest => {
+      const remembered = await readRememberedSession(manifest);
+      if (startupRestoreCancelled || !remembered) {
+        startupChecking = false;
+        setBusy(false);
+        setStatus("请输入账号与平台访问密码");
+        return;
+      }
+      accountInput.value = ACCOUNT_NAME;
+      rememberInput.checked = true;
+      startupChecking = false;
+      setBusy(false);
+      await unlock({ key: remembered.key, remember: true, automatic: true });
+    },
+    error => {
+      startupChecking = false;
+      setBusy(false);
+      setStatus(error instanceof Error ? error.message : "站点初始化失败", "error");
+    }
   );
 }
 
