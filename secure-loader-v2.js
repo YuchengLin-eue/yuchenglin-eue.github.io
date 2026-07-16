@@ -703,6 +703,8 @@ function bindShell() {
   const progressBar = document.querySelector("[data-progress]");
   const workspaceStatus = document.querySelector("[data-workspace-status]");
   const lock = document.querySelector("[data-lock]");
+  const characterScene = document.querySelector("[data-character-scene]");
+  const characterBodies = characterScene ? Array.from(characterScene.querySelectorAll("[data-character]")) : [];
   let manifestPromise = fetchManifest();
   let activeSession = null;
   let detachBridge = null;
@@ -715,6 +717,27 @@ function bindShell() {
   let sessionEpoch = 0;
   let frameGeneration = 0;
   let cancelFrameActivation = null;
+  let characterPointerFrame = 0;
+  let characterPointerX = 0;
+  let characterPointerY = 0;
+  let characterCenters = null;
+  let characterSceneEnabled = false;
+  let characterMotionRunning = false;
+  let characterSceneDisposed = false;
+  let characterFocusFrame = 0;
+  let mutualLookTimer = 0;
+  let peekDelayTimer = 0;
+  let peekCloseTimer = 0;
+  const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const blinkProfiles = characterBodies
+    .filter(body => body.dataset.character === "purple" || body.dataset.character === "dark")
+    .map(body => ({
+      body,
+      delayTimer: 0,
+      closeTimer: 0,
+      minDelay: body.dataset.character === "purple" ? 2800 : 3600,
+      maxDelay: body.dataset.character === "purple" ? 6200 : 7600
+    }));
 
   const setStatus = (message, type = "", field = "") => {
     status.textContent = message;
@@ -734,6 +757,249 @@ function bindShell() {
     passwordInput.disabled = busy;
     rememberInput.disabled = busy;
     toggle.disabled = busy;
+    syncCharacterScene();
+    refreshCharacterMotion();
+  };
+
+  const syncCharacterScene = () => {
+    if (!characterScene) return;
+    const passwordFilled = passwordInput.value.length > 0;
+    const nextState = unlocking ? "busy" : passwordFilled
+      ? passwordInput.type === "text" && passwordFilled ? "revealed" : "password"
+      : document.activeElement === accountInput ? "account" : "idle";
+    if (characterScene.dataset.state !== nextState) {
+      characterScene.dataset.state = nextState;
+      characterCenters = null;
+      if (nextState === "account") startMutualLook();
+      else clearMutualLook();
+      if (nextState === "revealed") startCharacterPeek();
+      else clearCharacterPeek();
+      if (nextState === "revealed" || nextState === "busy") resetCharacterPointer();
+    }
+  };
+
+  const resetCharacterPointer = () => {
+    for (const body of characterBodies) {
+      body.style.setProperty("--look-x", "0px");
+      body.style.setProperty("--look-y", "0px");
+      body.style.setProperty("--face-x", "0px");
+      body.style.setProperty("--face-y", "0px");
+      body.style.setProperty("--body-skew", "0deg");
+    }
+  };
+
+  const clearCharacterBlinks = () => {
+    for (const profile of blinkProfiles) {
+      if (profile.delayTimer) clearTimeout(profile.delayTimer);
+      if (profile.closeTimer) clearTimeout(profile.closeTimer);
+      profile.delayTimer = 0;
+      profile.closeTimer = 0;
+      delete profile.body.dataset.blinking;
+    }
+  };
+
+  const canRunCharacterMotion = () => characterSceneEnabled
+    && !characterSceneDisposed
+    && !shell.hidden
+    && !document.hidden
+    && !unlocking
+    && !reducedMotionQuery.matches;
+
+  const canTrackCharacterPointer = () => canRunCharacterMotion()
+    && characterScene.dataset.state !== "revealed"
+    && characterScene.dataset.state !== "busy";
+
+  const clearMutualLook = () => {
+    if (mutualLookTimer) clearTimeout(mutualLookTimer);
+    mutualLookTimer = 0;
+    delete characterScene.dataset.looking;
+  };
+
+  const startMutualLook = () => {
+    clearMutualLook();
+    if (!canRunCharacterMotion() || characterScene.dataset.state !== "account") return;
+    characterScene.dataset.looking = "true";
+    mutualLookTimer = window.setTimeout(() => {
+      mutualLookTimer = 0;
+      delete characterScene.dataset.looking;
+    }, 800);
+  };
+
+  const clearCharacterPeek = () => {
+    if (peekDelayTimer) clearTimeout(peekDelayTimer);
+    if (peekCloseTimer) clearTimeout(peekCloseTimer);
+    peekDelayTimer = 0;
+    peekCloseTimer = 0;
+    const purple = characterScene.querySelector('[data-character="purple"]');
+    if (purple) delete purple.dataset.peeking;
+  };
+
+  const scheduleCharacterPeek = () => {
+    if (!canRunCharacterMotion() || characterScene.dataset.state !== "revealed") return;
+    peekDelayTimer = window.setTimeout(() => {
+      peekDelayTimer = 0;
+      if (!canRunCharacterMotion() || characterScene.dataset.state !== "revealed") return;
+      const purple = characterScene.querySelector('[data-character="purple"]');
+      if (purple) purple.dataset.peeking = "true";
+      peekCloseTimer = window.setTimeout(() => {
+        peekCloseTimer = 0;
+        if (purple) delete purple.dataset.peeking;
+        scheduleCharacterPeek();
+      }, 800);
+    }, 2000 + Math.random() * 3000);
+  };
+
+  const startCharacterPeek = () => {
+    clearCharacterPeek();
+    scheduleCharacterPeek();
+  };
+
+  const clearCharacterSpecials = () => {
+    clearMutualLook();
+    clearCharacterPeek();
+  };
+
+  const startCharacterSpecials = () => {
+    if (characterScene.dataset.state === "account") startMutualLook();
+    if (characterScene.dataset.state === "revealed") startCharacterPeek();
+  };
+
+  const scheduleCharacterBlink = profile => {
+    if (!canRunCharacterMotion()) return;
+    const delay = profile.minDelay + Math.random() * (profile.maxDelay - profile.minDelay);
+    profile.delayTimer = window.setTimeout(() => {
+      profile.delayTimer = 0;
+      if (!canRunCharacterMotion()) return;
+      profile.body.dataset.blinking = "true";
+      profile.closeTimer = window.setTimeout(() => {
+        profile.closeTimer = 0;
+        delete profile.body.dataset.blinking;
+        scheduleCharacterBlink(profile);
+      }, 120 + Math.random() * 45);
+    }, delay);
+  };
+
+  const startCharacterBlinks = () => {
+    clearCharacterBlinks();
+    for (const profile of blinkProfiles) scheduleCharacterBlink(profile);
+  };
+
+  const updateCharacterPointer = () => {
+    characterPointerFrame = 0;
+    if (!canTrackCharacterPointer()) {
+      resetCharacterPointer();
+      return;
+    }
+    if (!characterCenters) {
+      characterCenters = characterBodies.map(body => {
+        const rect = body.getBoundingClientRect();
+        return {
+          body,
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 3
+        };
+      });
+    }
+    for (const center of characterCenters) {
+      const { body } = center;
+      const deltaX = characterPointerX - center.x;
+      const deltaY = characterPointerY - center.y;
+      const angle = Math.atan2(deltaY, deltaX);
+      const strength = Math.min(1, Math.hypot(deltaX, deltaY) / 220);
+      const maxLook = body.dataset.character === "dark" ? 4 : 5;
+      const lookX = Math.cos(angle) * maxLook * strength;
+      const lookY = Math.sin(angle) * maxLook * strength;
+      const skew = Math.max(-5, Math.min(5, -deltaX / 120));
+      const faceX = Math.max(-12, Math.min(12, deltaX / 22));
+      const faceY = Math.max(-8, Math.min(8, deltaY / 30));
+      body.style.setProperty("--look-x", `${lookX.toFixed(2)}px`);
+      body.style.setProperty("--look-y", `${lookY.toFixed(2)}px`);
+      body.style.setProperty("--face-x", `${faceX.toFixed(2)}px`);
+      body.style.setProperty("--face-y", `${faceY.toFixed(2)}px`);
+      body.style.setProperty("--body-skew", `${skew.toFixed(2)}deg`);
+    }
+  };
+
+  const trackCharacterPointer = event => {
+    if (!canTrackCharacterPointer() || event.pointerType && event.pointerType !== "mouse") return;
+    characterPointerX = event.clientX;
+    characterPointerY = event.clientY;
+    if (!characterPointerFrame) characterPointerFrame = requestAnimationFrame(updateCharacterPointer);
+  };
+
+  const handleCharacterPointerExit = event => {
+    if (event.relatedTarget === null) resetCharacterPointer();
+  };
+
+  const stopCharacterMotion = () => {
+    if (characterPointerFrame) cancelAnimationFrame(characterPointerFrame);
+    characterPointerFrame = 0;
+    clearCharacterBlinks();
+    clearCharacterSpecials();
+    if (characterMotionRunning) {
+      window.removeEventListener("pointermove", trackCharacterPointer);
+      window.removeEventListener("pointerout", handleCharacterPointerExit);
+      characterMotionRunning = false;
+    }
+    resetCharacterPointer();
+  };
+
+  function refreshCharacterMotion() {
+    if (!canRunCharacterMotion()) {
+      stopCharacterMotion();
+      return;
+    }
+    if (characterMotionRunning) return;
+    characterMotionRunning = true;
+    window.addEventListener("pointermove", trackCharacterPointer, { passive: true });
+    window.addEventListener("pointerout", handleCharacterPointerExit, { passive: true });
+    startCharacterBlinks();
+    startCharacterSpecials();
+  }
+
+  const pauseCharacterScene = () => {
+    characterSceneEnabled = false;
+    stopCharacterMotion();
+  };
+
+  const resumeCharacterScene = () => {
+    if (!characterScene || characterSceneDisposed) return;
+    characterSceneEnabled = true;
+    characterCenters = null;
+    syncCharacterScene();
+    refreshCharacterMotion();
+  };
+
+  const handleCharacterVisibility = () => refreshCharacterMotion();
+
+  const handleCharacterGeometryChange = () => {
+    characterCenters = null;
+  };
+
+  const handleCharacterFocusChange = () => {
+    if (characterFocusFrame) cancelAnimationFrame(characterFocusFrame);
+    characterFocusFrame = requestAnimationFrame(() => {
+      characterFocusFrame = 0;
+      syncCharacterScene();
+    });
+  };
+
+  const disposeCharacterScene = () => {
+    if (!characterScene || characterSceneDisposed) return;
+    characterSceneDisposed = true;
+    pauseCharacterScene();
+    if (characterFocusFrame) cancelAnimationFrame(characterFocusFrame);
+    characterFocusFrame = 0;
+    document.removeEventListener("visibilitychange", handleCharacterVisibility);
+    window.removeEventListener("resize", handleCharacterGeometryChange);
+    characterScene.removeEventListener("transitionend", handleCharacterGeometryChange);
+    form.removeEventListener("focusin", handleCharacterFocusChange);
+    form.removeEventListener("focusout", handleCharacterFocusChange);
+    if (typeof reducedMotionQuery.removeEventListener === "function") {
+      reducedMotionQuery.removeEventListener("change", handleCharacterVisibility);
+    } else {
+      reducedMotionQuery.removeListener(handleCharacterVisibility);
+    }
   };
 
   const cancelPrefetch = () => {
@@ -790,6 +1056,7 @@ function bindShell() {
     toggle.dataset.visible = "false";
     toggle.setAttribute("aria-pressed", "false");
     toggle.setAttribute("aria-label", "显示密码");
+    syncCharacterScene();
   };
 
   const reset = () => {
@@ -804,6 +1071,7 @@ function bindShell() {
     document.title = LOGIN_TITLE;
     setStatus("请输入账号与平台访问密码");
     passwordInput.focus();
+    resumeCharacterScene();
   };
 
   const syncTitle = () => {
@@ -834,14 +1102,34 @@ function bindShell() {
     toggle.setAttribute("aria-pressed", String(!visible));
     toggle.setAttribute("aria-label", visible ? "显示密码" : "隐藏密码");
     passwordInput.focus();
+    syncCharacterScene();
   });
 
   const clearFieldError = () => {
     if (status.dataset.type === "error") setStatus("请输入账号与平台访问密码");
   };
 
-  accountInput.addEventListener("input", clearFieldError);
-  passwordInput.addEventListener("input", clearFieldError);
+  accountInput.addEventListener("input", () => {
+    clearFieldError();
+    syncCharacterScene();
+  });
+  passwordInput.addEventListener("input", () => {
+    clearFieldError();
+    syncCharacterScene();
+  });
+  if (characterScene) {
+    form.addEventListener("focusin", handleCharacterFocusChange);
+    form.addEventListener("focusout", handleCharacterFocusChange);
+    document.addEventListener("visibilitychange", handleCharacterVisibility);
+    window.addEventListener("resize", handleCharacterGeometryChange, { passive: true });
+    characterScene.addEventListener("transitionend", handleCharacterGeometryChange);
+    if (typeof reducedMotionQuery.addEventListener === "function") {
+      reducedMotionQuery.addEventListener("change", handleCharacterVisibility);
+    } else {
+      reducedMotionQuery.addListener(handleCharacterVisibility);
+    }
+    resumeCharacterScene();
+  }
   rememberInput.addEventListener("change", () => {
     if (!rememberInput.checked) {
       void clearRememberedSession().then(cleared => {
@@ -869,6 +1157,7 @@ function bindShell() {
     });
     shell.hidden = true;
     workspace.hidden = false;
+    pauseCharacterScene();
     workspaceStatus.textContent = "正在打开平台";
     await new Promise((resolve, reject) => {
       let cancelActivation = null;
@@ -967,7 +1256,10 @@ function bindShell() {
       }
       progressBar.hidden = true;
       progressBar.value = 0;
-      passwordInput.focus();
+      requestAnimationFrame(() => {
+        if (!shell.hidden) passwordInput.focus();
+      });
+      resumeCharacterScene();
       if (/清单|下载/.test(String(error))) manifestPromise = fetchManifest();
       return false;
     } finally {
@@ -1003,7 +1295,10 @@ function bindShell() {
 
   setBusy(true, "正在检查");
   setStatus("正在检查已保存的登录");
-  window.addEventListener("beforeunload", clearSession);
+  window.addEventListener("beforeunload", () => {
+    disposeCharacterScene();
+    clearSession();
+  }, { once: true });
   manifestPromise.then(
     async manifest => {
       const remembered = await readRememberedSession(manifest);
