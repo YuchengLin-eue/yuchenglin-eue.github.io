@@ -722,7 +722,6 @@ function bindShell() {
   const status = document.querySelector("[data-status]");
   const progressBar = document.querySelector("[data-progress]");
   const workspaceStatus = document.querySelector("[data-workspace-status]");
-  const lock = document.querySelector("[data-lock]");
   const characterScene = document.querySelector("[data-character-scene]");
   const characterBodies = characterScene ? Array.from(characterScene.querySelectorAll("[data-character]")) : [];
   let manifestPromise = fetchManifest();
@@ -1176,16 +1175,6 @@ function bindShell() {
         if (!cleared && !shell.hidden) setStatus("长期登录已停用，但设备登录数据清理失败", "error", "session-error");
       });
     }
-  });
-
-  lock.addEventListener("click", () => {
-    sessionEpoch += 1;
-    setRememberedSessionRevoked(true);
-    rememberInput.checked = false;
-    reset();
-    void clearRememberedSession().then(cleared => {
-      if (!cleared) setStatus("平台已锁定，但设备登录数据清理失败，请清理浏览器站点数据", "error", "session-error");
-    });
   });
 
   const activateSession = async session => {
