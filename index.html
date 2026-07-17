@@ -122,16 +122,16 @@
     .status[data-type="error"]{color:#b42318}
     .footer{display:flex;align-items:center;justify-content:center;gap:7px;padding:0 18px;color:#5f6c78;font-size:12px}
     .workspace{height:100%;background:#fff}
-    .workspacebar{height:44px;display:flex;align-items:center;gap:14px;padding:0 12px 0 16px;border-bottom:1px solid #d8dee5;background:#fff;color:#17212b}
-    .workspacetitle{font-size:14px;font-weight:700}
+    .workspacebar{height:44px;display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 12px;border-bottom:1px solid #d8dee5;background:#fff;color:#17212b;pointer-events:none}
     .workspacestatus{min-width:0;margin-left:auto;color:#65727e;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .lock{height:30px;padding:0 11px;border:1px solid #b9c3cd;border-radius:5px;background:#f7f9fb;color:#34475a;font-size:12px}
+    .lock{position:fixed;z-index:20;top:100px;right:12px;height:30px;padding:0 11px;border:1px solid #b9c3cd;border-radius:5px;background:#f7f9fb;color:#34475a;font-size:12px;pointer-events:auto}
     .appframe{display:block;width:100%;height:calc(100% - 44px);border:0;background:#fff}
     @keyframes module-enter{from{opacity:0;translate:0 28px}to{opacity:1;translate:0 0}}
     @keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:900px){.auth-shell{width:min(100%,540px);min-height:0;grid-template-columns:1fr;grid-template-rows:205px auto}.identity-pane{display:block;padding:24px 30px}.identity-pane::before{inset:16px}.identity-tag{display:none}.identity-title{max-width:240px;font-size:22px}.inventory-visual{right:50%;bottom:0;transform:translateX(50%) scale(.55);transform-origin:center bottom}.auth-pane{padding:44px}}
     @media(max-width:520px){.login{grid-template-rows:58px minmax(0,1fr) auto}.brandbar-inner{padding:0 16px}.brandmark{width:34px;height:34px;flex-basis:34px}.brandcopy{gap:0}.brandname{font-size:15px}.brandsub,.accessmeta{display:none}.main{align-items:start;padding:8px 0}.auth-shell{grid-template-rows:120px auto;border:0;border-radius:0;box-shadow:none}.identity-pane{padding:0}.identity-pane::before,.identity-copy{display:none}.inventory-visual{bottom:0;transform:translateX(50%) scale(.36)}.auth-pane{min-height:540px;align-items:flex-start;padding:30px 22px}.auth-title{font-size:26px}.auth-title+.field{margin-top:26px}.footer{min-height:38px;padding:8px 14px calc(8px + env(safe-area-inset-bottom));text-align:center}}
     @media(max-width:360px){.brandbar-inner{padding:0 12px}.brand{gap:9px}.brandname{font-size:14px}.auth-pane{padding-left:18px;padding-right:18px}}
+    @media(max-width:700px){.lock{top:54px;right:8px}}
     @media(max-height:800px) and (min-width:901px){.main{align-items:start;padding-top:18px;padding-bottom:18px}.auth-shell{min-height:560px}.identity-pane{padding-top:42px}.auth-pane{padding-top:30px;padding-bottom:30px}.inventory-visual{transform:scale(.88);transform-origin:right bottom}}
     @media(prefers-reduced-motion:reduce){.startup-spinner,.module,.primary[data-busy="true"]::before{animation:none}.module,.module-face,.character-eye,.character-pupil,.dot-eye,.character-mouth{transition:none}}
   </style>
@@ -200,7 +200,6 @@
   </section>
   <section class="workspace" data-workspace hidden>
     <header class="workspacebar">
-      <span class="workspacetitle">备件库存结构分析平台</span>
       <span class="workspacestatus" data-workspace-status role="status" aria-live="polite"></span>
       <button class="lock" data-lock type="button" title="关闭当前会话">锁定</button>
     </header>
