@@ -48,10 +48,19 @@ const SESSION_RECORD_ID = "primary";
 const SESSION_REVOKED_KEY = "secure-pages-session-revoked-v1";
 const LOGIN_TITLE = "安全访问 | 备件库存结构分析平台";
 const PLATFORM_TITLE = "备件库存结构分析平台";
+const LOGIN_PAGE_EXPIRED_MESSAGE = "登录页面已失效，请重新刷新";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const cipherJobs = new Map();
 let cipherCachePromise;
+
+export function friendlyLoginError(error, automatic = false) {
+  const message = error instanceof Error ? error.message : String(error || "无法打开加密站点");
+  const expired = /加密模块长度不正确|加密模块校验失败|站点版本不兼容|加密清单格式不正确|加密清单记录不正确|模块清单不完整|资源清单不完整|模块校验信息不正确|模块加密参数不正确|密钥参数不正确|加密参数不正确|解压后数据长度不正确|加密模块解压失败|模块文本编码不正确|模块数据损坏或版本不匹配/.test(message);
+  if (expired) return { message: LOGIN_PAGE_EXPIRED_MESSAGE, type: "session-error", expired: true };
+  if (automatic) return { message: /下载|清单/.test(message) ? message : "保存的登录已失效，请重新登录", type: "session-error", expired: false };
+  return { message, type: /密码不正确/.test(message) ? "password-error" : "session-error", expired: false };
+}
 
 function fromBase64(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error("加密清单格式不正确");
@@ -1270,16 +1279,13 @@ function bindShell() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "无法打开加密站点";
       if (operationEpoch !== sessionEpoch || message === "登录已取消") return false;
+      const feedback = friendlyLoginError(error, automatic);
       clearSession();
       passwordInput.value = "";
       resetPasswordVisibility();
       document.title = LOGIN_TITLE;
-      if (automatic) {
-        if (/密码不正确|登录已失效|数据已损坏|版本不匹配/.test(message)) await clearRememberedSession();
-        setStatus(/下载|清单/.test(message) ? message : "保存的登录已失效，请重新登录", "error", "session-error");
-      } else {
-        setStatus(message, "error", /密码不正确/.test(message) ? "password-error" : "session-error");
-      }
+      if (automatic && (/密码不正确|登录已失效|数据已损坏|版本不匹配/.test(message) || feedback.expired)) await clearRememberedSession();
+      setStatus(feedback.message, "error", feedback.type);
       progressBar.hidden = true;
       progressBar.value = 0;
       showLogin();
